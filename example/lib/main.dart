@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:camera_discovery/camera_discovery.dart';
 import 'package:media_kit/media_kit.dart';
@@ -20,19 +21,19 @@ class CameraDiscoveryExampleApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      home: const DiscoveryScreen(),
+      home: const HomeScreen(),
     );
   }
 }
 
-class DiscoveryScreen extends StatefulWidget {
-  const DiscoveryScreen({super.key});
+class ManualScanScreen extends StatefulWidget {
+  const ManualScanScreen({super.key});
 
   @override
-  State<DiscoveryScreen> createState() => _DiscoveryScreenState();
+  State<ManualScanScreen> createState() => _ManualScanScreenState();
 }
 
-class _DiscoveryScreenState extends State<DiscoveryScreen> {
+class _ManualScanScreenState extends State<ManualScanScreen> {
   final CameraDiscoveryService _discoveryService = CameraDiscoveryService();
   bool _isDiscovering = false;
   List<DiscoveredCamera> _cameras = [];
@@ -85,7 +86,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Camera Discovery'),
+        title: const Text('Manual Camera Scan'),
         actions: [
           if (_isDiscovering)
             const Padding(
@@ -147,6 +148,143 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
       floatingActionButton: FloatingActionButton(
         onPressed: _isDiscovering ? null : _startDiscovery,
         child: const Icon(Icons.search),
+      ),
+    );
+  }
+}
+
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Camera Discovery')),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            ElevatedButton.icon(
+              icon: const Icon(Icons.search),
+              label: const Text('Manual Scan'),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ManualScanScreen()),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.radar),
+              label: const Text('Real-time Scan'),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const RealTimeScanScreen()),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class RealTimeScanScreen extends StatefulWidget {
+  const RealTimeScanScreen({super.key});
+
+  @override
+  State<RealTimeScanScreen> createState() => _RealTimeScanScreenState();
+}
+
+class _RealTimeScanScreenState extends State<RealTimeScanScreen> {
+  final CameraDiscoveryService _discoveryService = CameraDiscoveryService();
+  Timer? _timer;
+  List<DiscoveredCamera> _cameras = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _startRealTimeScan();
+  }
+
+  void _startRealTimeScan() {
+    // Initial scan
+    _runScan();
+    // Periodic scan
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _runScan();
+    });
+  }
+
+  Future<void> _runScan() async {
+    try {
+      final report = await _discoveryService.discover(
+        enableFallbackScan: false, // Skip slow subnet scan for real-time
+        onvifTimeout: const Duration(seconds: 2),
+      );
+      if (mounted) {
+        setState(() {
+          // Since discover creates a new report each time, 
+          // simply replacing the list will naturally drop cameras that are no longer found.
+          _cameras = report.cameras;
+        });
+      }
+    } catch (e) {
+      debugPrint('Real-time scan error: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _onCameraTapped(DiscoveredCamera camera) {
+    showDialog(
+      context: context,
+      builder: (context) => AuthDialog(camera: camera),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Real-time Scan'),
+      ),
+      body: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8.0),
+            color: Colors.green.shade100,
+            width: double.infinity,
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                SizedBox(width: 8),
+                Text('Scanning in background...', style: TextStyle(fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _cameras.isEmpty
+                ? const Center(child: Text('Looking for cameras...'))
+                : ListView.builder(
+                    itemCount: _cameras.length,
+                    itemBuilder: (context, index) {
+                      final camera = _cameras[index];
+                      return ListTile(
+                        leading: const Icon(Icons.camera_alt, color: Colors.green),
+                        title: Text(camera.name ?? 'Unknown Camera'),
+                        subtitle: Text('${camera.ip} - ${camera.supportedProtocols.map((e) => e.displayName).join(', ')}'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _onCameraTapped(camera),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }
