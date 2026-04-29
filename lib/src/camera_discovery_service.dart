@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
+import 'package:flutter/foundation.dart';
 
 import 'package:easy_onvif/probe.dart';
 import 'package:network_info_plus/network_info_plus.dart';
@@ -9,6 +9,7 @@ import 'package:nsd/nsd.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'camera_discovery_helpers.dart';
+import 'camera_protocol.dart';
 import 'discovered_camera.dart';
 import 'discovery_report.dart';
 import 'mac_address_resolver.dart';
@@ -22,6 +23,7 @@ class CameraDiscoveryService {
   final MacAddressResolver _macAddressResolver;
 
   static bool _networkToolsConfigured = false;
+  static Completer<void>? _networkToolsInitializationCompleter;
   static bool _nsdConfigured = false;
   static const _mdnsDiscoveryWindow = Duration(seconds: 2);
 
@@ -53,7 +55,12 @@ class CameraDiscoveryService {
         onProgress == null ? null : onProgress(sortCamerasByIpOctet(camerasByIp.values), phase);
 
     try {
-      await _configureNetworkToolsIfNeeded();
+      try {
+        await _configureNetworkToolsIfNeeded();
+      } catch (e) {
+        // Rethrow initialization error as it's critical
+        rethrow;
+      }
 
       notifyProgress('mDNS Bonjour...');
       try {
@@ -75,11 +82,33 @@ class CameraDiscoveryService {
           final ip = extractIpv4FromXAddrs(match.xAddrs);
           if (ip == null) continue;
 
+          final supportedProtocols = <CameraProtocol>{CameraProtocol.onvif};
+          final hw = match.hardware.toLowerCase();
+          final nameStr = match.name.toLowerCase();
+          final scopesStr = match.scopes.toString().toLowerCase();
+          final endpoint = match.endpointReference.address.toLowerCase();
+          
+          final fullStr = '$hw | $nameStr | $scopesStr | $endpoint';
+          debugPrint('ONVIF Match metadata for $ip: $fullStr');
+
+          if (fullStr.contains('dahua') || 
+              fullStr.contains('general dvr') || 
+              fullStr.contains('general nvr') ||
+              fullStr.contains('general_') ||
+              (hw == 'general' || nameStr == 'general')) {
+            supportedProtocols.add(CameraProtocol.dahua);
+          }
+          
+          if (fullStr.contains('hikvision')) {
+            supportedProtocols.add(CameraProtocol.hikvision);
+          }
+
           final newCam = DiscoveredCamera(
             ip: ip,
             source: CameraDiscoverySource.onvif,
             name: match.name.isEmpty ? null : match.name,
             onvifXAddr: match.xAddr,
+            supportedProtocols: supportedProtocols,
           );
 
           if (_addOrMergeCamera(newCam, camerasByIp, ipByName)) {
@@ -123,6 +152,14 @@ class CameraDiscoveryService {
       } catch (e) {
         warnings.add('Unable to resolve all MAC addresses: $e');
       }
+
+      notifyProgress('Detecting supported protocols...');
+      try {
+        final changed = await _detectProtocols(camerasByIp);
+        if (changed) notifyProgress('Detecting supported protocols...');
+      } catch (e) {
+        warnings.add('Protocol detection failed: $e');
+      }
     } catch (e) {
       warnings.add('Discovery failed: $e');
     }
@@ -158,6 +195,7 @@ class CameraDiscoveryService {
           camerasByIp[newIp] = newCam.copyWith(
             onvifXAddr: newCam.onvifXAddr ?? existingCam.onvifXAddr,
             macAddress: newCam.macAddress ?? existingCam.macAddress,
+            supportedProtocols: existingCam.supportedProtocols.union(newCam.supportedProtocols),
           );
           ipByName[name] = newIp;
           return true;
@@ -168,6 +206,7 @@ class CameraDiscoveryService {
             onvifXAddr: existingCam.onvifXAddr ?? newCam.onvifXAddr,
             rtspUri: existingCam.rtspUri ?? newCam.rtspUri,
             macAddress: existingCam.macAddress ?? newCam.macAddress,
+            supportedProtocols: existingCam.supportedProtocols.union(newCam.supportedProtocols),
           );
           return true;
         }
@@ -185,6 +224,7 @@ class CameraDiscoveryService {
         onvifXAddr: existingCam.onvifXAddr ?? newCam.onvifXAddr,
         rtspUri: existingCam.rtspUri ?? newCam.rtspUri,
         macAddress: existingCam.macAddress ?? newCam.macAddress,
+        supportedProtocols: existingCam.supportedProtocols.union(newCam.supportedProtocols),
       );
       return true;
     }
@@ -198,9 +238,21 @@ class CameraDiscoveryService {
       return;
     }
 
-    final supportDirectory = await getApplicationSupportDirectory();
-    await configureNetworkTools(supportDirectory.path, enableDebugging: false);
-    _networkToolsConfigured = true;
+    if (_networkToolsInitializationCompleter != null) {
+      return _networkToolsInitializationCompleter!.future;
+    }
+
+    _networkToolsInitializationCompleter = Completer<void>();
+    try {
+      final supportDirectory = await getApplicationSupportDirectory();
+      await configureNetworkTools(supportDirectory.path, enableDebugging: false);
+      _networkToolsConfigured = true;
+      _networkToolsInitializationCompleter!.complete();
+    } catch (e) {
+      _networkToolsInitializationCompleter!.completeError(e);
+      _networkToolsInitializationCompleter = null;
+      rethrow;
+    }
   }
 
   void _configureNsdIfNeeded() {
@@ -337,12 +389,66 @@ class CameraDiscoveryService {
   Future<bool> _isPortOpen(String host, int port) async {
     Socket? socket;
     try {
-      socket = await Socket.connect(host, port, timeout: const Duration(milliseconds: 300));
+      socket = await Socket.connect(host, port, timeout: const Duration(milliseconds: 1500));
+      debugPrint('Port check success: $host:$port is OPEN');
       return true;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Port check failed: $host:$port ($e)');
       return false;
     } finally {
       await socket?.close();
     }
+  }
+
+  Future<bool> _detectProtocols(Map<String, DiscoveredCamera> camerasByIp) async {
+    var changed = false;
+    final futures = camerasByIp.values.map((cam) async {
+      debugPrint('Detecting protocols for ${cam.ip}...');
+      final protocols = <CameraProtocol>{...cam.supportedProtocols};
+
+      if (cam.source == CameraDiscoverySource.onvif || cam.onvifXAddr != null) {
+        protocols.add(CameraProtocol.onvif);
+      }
+
+      // Check Dahua via MAC OUI
+      final mac = cam.macAddress?.toUpperCase().replaceAll(':', '') ?? '';
+      if (mac.startsWith('5C02F5') || mac.startsWith('38AF29') || mac.startsWith('E0508B') || mac.startsWith('9002A9') || mac.startsWith('BC325F') || mac.startsWith('14A78B')) {
+        protocols.add(CameraProtocol.dahua);
+      }
+      
+      // Check Hikvision via MAC OUI
+      if (mac.startsWith('A41437') || mac.startsWith('C056E3') || mac.startsWith('8CE748') || mac.startsWith('4411C2') || mac.startsWith('E866CB')) {
+        protocols.add(CameraProtocol.hikvision);
+      }
+
+      // Check Dahua via port
+      if (await _isPortOpen(cam.ip, 37777)) {
+        protocols.add(CameraProtocol.dahua);
+      }
+
+      // Check Hikvision
+      if (await _isPortOpen(cam.ip, 8000)) {
+        protocols.add(CameraProtocol.hikvision);
+      }
+
+      // Check Generic RTSP
+      if (await _isPortOpen(cam.ip, 554) || await _isPortOpen(cam.ip, 8554)) {
+        protocols.add(CameraProtocol.generic);
+      }
+
+      if (protocols.isEmpty) {
+        protocols.add(CameraProtocol.generic);
+      }
+
+      debugPrint('Found protocols for ${cam.ip}: ${protocols.map((e) => e.displayName).join(', ')}');
+
+      if (protocols.length != cam.supportedProtocols.length || !protocols.containsAll(cam.supportedProtocols)) {
+        camerasByIp[cam.ip] = cam.copyWith(supportedProtocols: protocols);
+        changed = true;
+      }
+    });
+
+    await Future.wait(futures);
+    return changed;
   }
 }

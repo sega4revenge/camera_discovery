@@ -3,15 +3,28 @@ import 'dart:convert';
 
 import 'package:easy_onvif/onvif.dart';
 
+import 'camera_protocol.dart';
+
 class CameraAuthService {
   Future<List<String>> getRtspStreams({
     required String ip,
     required String username,
     required String password,
+    CameraProtocol protocol = CameraProtocol.onvif,
     String? rtspPort,
     int maxResults = 1,
   }) async {
     final effectiveMaxResults = maxResults < 1 ? 1 : maxResults;
+    final port = await _resolveRtspPort(ip, rtspPort);
+
+    if (protocol != CameraProtocol.onvif) {
+      final candidates = _generateRtspLinksForProtocol(protocol, ip, username, password, port);
+      final playable = await _findPlayableRtspLinks(candidates, maxResults: effectiveMaxResults);
+      if (playable.isNotEmpty) {
+        return playable;
+      }
+      throw Exception('Unable to find a playable RTSP stream for ${protocol.displayName}.');
+    }
 
     try {
       final onvif = await Onvif.connect(host: ip, username: username, password: password);
@@ -37,8 +50,7 @@ class CameraAuthService {
           errorMsg.contains('connection') ||
           errorMsg.contains('timeout') ||
           errorMsg.contains('socket')) {
-        final port = await _resolveRtspPort(ip, rtspPort);
-        final fallback = _generateFallbackRtspLinks(ip, username, password, port);
+        final fallback = _generateRtspLinksForProtocol(CameraProtocol.generic, ip, username, password, port);
         final playable = await _findPlayableRtspLinks(fallback, maxResults: effectiveMaxResults);
         if (playable.isNotEmpty) {
           return playable;
@@ -50,8 +62,7 @@ class CameraAuthService {
       throw Exception('Unable to authenticate camera or fetch RTSP streams: $e');
     }
 
-    final port = await _resolveRtspPort(ip, rtspPort);
-    final fallback = _generateFallbackRtspLinks(ip, username, password, port);
+    final fallback = _generateRtspLinksForProtocol(CameraProtocol.generic, ip, username, password, port);
     final playable = await _findPlayableRtspLinks(fallback, maxResults: effectiveMaxResults);
     if (playable.isNotEmpty) {
       return playable;
@@ -69,19 +80,34 @@ class CameraAuthService {
     return resolved;
   }
 
-  List<String> _generateFallbackRtspLinks(String ip, String username, String password, String port) {
+  List<String> _generateRtspLinksForProtocol(
+      CameraProtocol protocol, String ip, String username, String password, String port) {
     final auth = '${Uri.encodeComponent(username)}:${Uri.encodeComponent(password)}';
 
-    return [
-      'rtsp://$auth@$ip:$port/Streaming/Channels/101',
-      'rtsp://$auth@$ip:$port/Streaming/Channels/102',
-      'rtsp://$auth@$ip:$port/cam/realmonitor?channel=1&subtype=0',
-      'rtsp://$auth@$ip:$port/cam/realmonitor?channel=1&subtype=1',
-      'rtsp://$auth@$ip:$port/onvif1',
-      'rtsp://$auth@$ip:$port/live/ch00_0',
-      'rtsp://$auth@$ip:$port/stream1',
-      'rtsp://$auth@$ip:$port/stream2',
-    ];
+    switch (protocol) {
+      case CameraProtocol.dahua:
+        return [
+          'rtsp://$auth@$ip:$port/cam/realmonitor?channel=1&subtype=0',
+          'rtsp://$auth@$ip:$port/cam/realmonitor?channel=1&subtype=1',
+        ];
+      case CameraProtocol.hikvision:
+        return [
+          'rtsp://$auth@$ip:$port/Streaming/Channels/101',
+          'rtsp://$auth@$ip:$port/Streaming/Channels/102',
+        ];
+      case CameraProtocol.onvif:
+      case CameraProtocol.generic:
+        return [
+          'rtsp://$auth@$ip:$port/Streaming/Channels/101',
+          'rtsp://$auth@$ip:$port/Streaming/Channels/102',
+          'rtsp://$auth@$ip:$port/cam/realmonitor?channel=1&subtype=0',
+          'rtsp://$auth@$ip:$port/cam/realmonitor?channel=1&subtype=1',
+          'rtsp://$auth@$ip:$port/onvif1',
+          'rtsp://$auth@$ip:$port/live/ch00_0',
+          'rtsp://$auth@$ip:$port/stream1',
+          'rtsp://$auth@$ip:$port/stream2',
+        ];
+    }
   }
 
   Future<List<String>> _findPlayableRtspLinks(List<String> candidates, {required int maxResults}) async {

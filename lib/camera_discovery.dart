@@ -4,3 +4,4 @@ export 'src/camera_discovery_helpers.dart';
 export 'src/discovered_camera.dart';
 export 'src/discovery_report.dart';
 export 'src/mac_address_resolver.dart';
+export 'src/camera_protocol.dart';
