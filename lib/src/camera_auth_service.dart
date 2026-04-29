@@ -106,6 +106,7 @@ class CameraAuthService {
           'rtsp://$auth@$ip:$port/live/ch00_0',
           'rtsp://$auth@$ip:$port/stream1',
           'rtsp://$auth@$ip:$port/stream2',
+          'rtsp://$auth@$ip:$port/live0', // Eufy NAS (RTSP) stream
         ];
     }
   }

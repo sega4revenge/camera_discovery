@@ -36,6 +36,8 @@ class CameraDiscoveryService {
     '_axis-video._tcp',
     '_camera._tcp',
     '_nvr._tcp',
+    '_hap._tcp', // HomeKit (rất nhiều camera Eufy dùng chuẩn này)
+    '_eufy._tcp', // Dự phòng cho các thiết bị Eufy
   ];
 
   Future<DiscoveryReport> discover({
