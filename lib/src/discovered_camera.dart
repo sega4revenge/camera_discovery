@@ -1,12 +1,14 @@
 import 'camera_protocol.dart';
 
-enum CameraDiscoverySource { onvif, mdns, rtspPortScan }
+enum CameraDiscoverySource { onvif, mdns, rtspPortScan, sadp }
 
 class DiscoveredCamera {
   const DiscoveredCamera({
     required this.ip,
     required this.source,
     this.name,
+    this.model,
+    this.serialNumber,
     this.macAddress,
     this.onvifXAddr,
     this.rtspUri,
@@ -15,6 +17,8 @@ class DiscoveredCamera {
 
   final String ip;
   final String? name;
+  final String? model;
+  final String? serialNumber;
   final String? macAddress;
   final CameraDiscoverySource source;
   final String? onvifXAddr;
@@ -24,6 +28,8 @@ class DiscoveredCamera {
   DiscoveredCamera copyWith({
     String? ip,
     String? name,
+    String? model,
+    String? serialNumber,
     String? macAddress,
     CameraDiscoverySource? source,
     String? onvifXAddr,
@@ -33,6 +39,8 @@ class DiscoveredCamera {
     return DiscoveredCamera(
       ip: ip ?? this.ip,
       name: name ?? this.name,
+      model: model ?? this.model,
+      serialNumber: serialNumber ?? this.serialNumber,
       macAddress: macAddress ?? this.macAddress,
       source: source ?? this.source,
       onvifXAddr: onvifXAddr ?? this.onvifXAddr,

@@ -1,11 +1,37 @@
-import 'dart:io';
 import 'dart:convert';
+import 'dart:async';
+import 'dart:io';
 
 import 'package:easy_onvif/onvif.dart';
 
 import 'camera_protocol.dart';
+import 'rtsp_auth_verifier.dart';
 
 class CameraAuthService {
+  /// Verifies credentials using ONVIF if available.
+  /// Returns true if successful, throws if unauthorized, or returns true if ONVIF is disabled
+  /// (since we cannot easily verify digest auth without it).
+  Future<bool> verifyCredentials({
+    required String ip, 
+    required String username, 
+    required String password,
+    String? rtspPort,
+  }) async {
+    try {
+      final onvif = await Onvif.connect(host: ip, username: username, password: password);
+      return true;
+    } catch (e) {
+      final errorMsg = e.toString().toLowerCase();
+      if (errorMsg.contains('401') || errorMsg.contains('unauthorized')) {
+        throw CameraAuthException('Incorrect username or password.');
+      }
+      // If ONVIF fails due to timeout or connection refused (ONVIF disabled),
+      // we attempt to verify using RTSP DESCRIBE auth natively.
+      final portStr = await _resolveRtspPort(ip, rtspPort);
+      return await RtspAuthVerifier.verifyRtspAuth(ip, username, password, port: int.tryParse(portStr) ?? 554);
+    }
+  }
+
   Future<List<String>> getRtspStreams({
     required String ip,
     required String username,
@@ -13,19 +39,13 @@ class CameraAuthService {
     CameraProtocol protocol = CameraProtocol.onvif,
     String? rtspPort,
     int maxResults = 1,
+    bool useFallback = true,
   }) async {
     final effectiveMaxResults = maxResults < 1 ? 1 : maxResults;
     final port = await _resolveRtspPort(ip, rtspPort);
 
-    if (protocol != CameraProtocol.onvif) {
-      final candidates = _generateRtspLinksForProtocol(protocol, ip, username, password, port);
-      final playable = await _findPlayableRtspLinks(candidates, maxResults: effectiveMaxResults);
-      if (playable.isNotEmpty) {
-        return playable;
-      }
-      throw Exception('Unable to find a playable RTSP stream for ${protocol.displayName}.');
-    }
-
+    // 1. Prioritize querying the camera directly for its exact RTSP URL via ONVIF
+    // Many EZVIZ/Hikvision/Dahua cameras support ONVIF WS-Media. This avoids guessing.
     try {
       final onvif = await Onvif.connect(host: ip, username: username, password: password);
       final profiles = await onvif.media.getProfiles();
@@ -44,31 +64,39 @@ class CameraAuthService {
       }
     } catch (e) {
       final errorMsg = e.toString().toLowerCase();
-      if (errorMsg.contains('404') ||
-          errorMsg.contains('refuse') ||
-          errorMsg.contains('disabled') ||
-          errorMsg.contains('connection') ||
-          errorMsg.contains('timeout') ||
-          errorMsg.contains('socket')) {
-        final fallback = _generateRtspLinksForProtocol(CameraProtocol.generic, ip, username, password, port);
-        final playable = await _findPlayableRtspLinks(fallback, maxResults: effectiveMaxResults);
-        if (playable.isNotEmpty) {
-          return playable;
-        }
-
-        throw Exception('Unable to find a playable RTSP stream.');
+      // If ONVIF responds with 401, we definitively know the credentials are wrong.
+      if (errorMsg.contains('401') || errorMsg.contains('unauthorized')) {
+        throw CameraAuthException('Incorrect username or password.');
       }
-
-      throw Exception('Unable to authenticate camera or fetch RTSP streams: $e');
+      // Otherwise, ONVIF might be disabled. Let's try RTSP native verification.
+      final isValid = await RtspAuthVerifier.verifyRtspAuth(ip, username, password, port: int.tryParse(port) ?? 554);
+      if (!isValid) {
+        throw CameraAuthException('Incorrect username or password.');
+      }
     }
 
-    final fallback = _generateRtspLinksForProtocol(CameraProtocol.generic, ip, username, password, port);
-    final playable = await _findPlayableRtspLinks(fallback, maxResults: effectiveMaxResults);
+    // 2. If ONVIF failed and fallback is disabled, stop here.
+    if (!useFallback) {
+      throw Exception('Unable to fetch exact RTSP stream from camera and fallback is disabled.');
+    }
+
+    // 3. Fallback: Guess URLs based on the specific camera protocol
+    if (protocol != CameraProtocol.onvif) {
+      final protocolFallback = _generateRtspLinksForProtocol(protocol, ip, username, password, port);
+      final playable = await _findPlayableRtspLinks(protocolFallback, maxResults: effectiveMaxResults);
+      if (playable.isNotEmpty) {
+        return playable;
+      }
+    }
+
+    // 4. Last Resort: Guess URLs based on generic RTSP paths
+    final genericFallback = _generateRtspLinksForProtocol(CameraProtocol.generic, ip, username, password, port);
+    final playable = await _findPlayableRtspLinks(genericFallback, maxResults: effectiveMaxResults);
     if (playable.isNotEmpty) {
       return playable;
     }
 
-    throw Exception('Unable to find a playable RTSP stream.');
+    throw Exception('Unable to find a playable RTSP stream using any method.');
   }
 
   Future<String> _resolveRtspPort(String ip, String? rtspPort) async {
@@ -80,8 +108,14 @@ class CameraAuthService {
     return resolved;
   }
 
+
   List<String> _generateRtspLinksForProtocol(
-      CameraProtocol protocol, String ip, String username, String password, String port) {
+    CameraProtocol protocol,
+    String ip,
+    String username,
+    String password,
+    String port,
+  ) {
     final auth = '${Uri.encodeComponent(username)}:${Uri.encodeComponent(password)}';
 
     switch (protocol) {
@@ -91,13 +125,18 @@ class CameraAuthService {
           'rtsp://$auth@$ip:$port/cam/realmonitor?channel=1&subtype=1',
         ];
       case CameraProtocol.hikvision:
+        return ['rtsp://$auth@$ip:$port/Streaming/Channels/101', 'rtsp://$auth@$ip:$port/Streaming/Channels/102'];
+      case CameraProtocol.ezviz:
         return [
+          'rtsp://$auth@$ip:$port/h264_stream',
+          'rtsp://$auth@$ip:$port/h265_stream',
+          // Sometimes EZVIZ uses Hikvision's format too
           'rtsp://$auth@$ip:$port/Streaming/Channels/101',
-          'rtsp://$auth@$ip:$port/Streaming/Channels/102',
         ];
       case CameraProtocol.onvif:
       case CameraProtocol.generic:
         return [
+          'rtsp://$auth@$ip:$port/h264_stream',
           'rtsp://$auth@$ip:$port/Streaming/Channels/101',
           'rtsp://$auth@$ip:$port/Streaming/Channels/102',
           'rtsp://$auth@$ip:$port/cam/realmonitor?channel=1&subtype=0',

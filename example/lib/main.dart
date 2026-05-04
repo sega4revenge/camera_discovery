@@ -17,10 +17,7 @@ class CameraDiscoveryExampleApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Camera Discovery Example',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-        useMaterial3: true,
-      ),
+      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue), useMaterial3: true),
       home: const HomeScreen(),
     );
   }
@@ -34,7 +31,7 @@ class ManualScanScreen extends StatefulWidget {
 }
 
 class _ManualScanScreenState extends State<ManualScanScreen> {
-  final CameraDiscoveryService _discoveryService = CameraDiscoveryService();
+  final CameraDiscoveryService _discoveryService = CameraDiscoveryService(logLevel: CameraDiscoveryLogLevel.none);
   bool _isDiscovering = false;
   List<DiscoveredCamera> _cameras = [];
   String _statusPhase = '';
@@ -51,9 +48,10 @@ class _ManualScanScreenState extends State<ManualScanScreen> {
     try {
       final report = await _discoveryService.discover(
         onProgress: (cameras, phase) {
+          if (!mounted) return;
           setState(() {
             _cameras = cameras;
-            _statusPhase = phase;
+            _statusPhase = phase.displayName;
           });
         },
       );
@@ -98,10 +96,7 @@ class _ManualScanScreenState extends State<ManualScanScreen> {
               ),
             )
           else
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: _startDiscovery,
-            ),
+            IconButton(icon: const Icon(Icons.refresh), onPressed: _startDiscovery),
         ],
       ),
       body: Column(
@@ -111,20 +106,14 @@ class _ManualScanScreenState extends State<ManualScanScreen> {
               padding: const EdgeInsets.all(8.0),
               color: Colors.grey.shade200,
               width: double.infinity,
-              child: Text(
-                'Status: $_statusPhase',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
+              child: Text('Status: $_statusPhase', style: const TextStyle(fontWeight: FontWeight.bold)),
             ),
           if (_error != null)
             Container(
               padding: const EdgeInsets.all(8.0),
               color: Colors.red.shade100,
               width: double.infinity,
-              child: Text(
-                'Error/Warnings: $_error',
-                style: const TextStyle(color: Colors.red),
-              ),
+              child: Text('Error/Warnings: $_error', style: const TextStyle(color: Colors.red)),
             ),
           Expanded(
             child: _cameras.isEmpty
@@ -136,7 +125,9 @@ class _ManualScanScreenState extends State<ManualScanScreen> {
                       return ListTile(
                         leading: const Icon(Icons.camera_alt),
                         title: Text(camera.name ?? 'Unknown Camera'),
-                        subtitle: Text('${camera.ip} - ${camera.supportedProtocols.map((e) => e.displayName).join(', ')}'),
+                        subtitle: Text(
+                          '${camera.ip} - ${camera.supportedProtocols.map((e) => e.displayName).join(', ')}',
+                        ),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () => _onCameraTapped(camera),
                       );
@@ -167,19 +158,15 @@ class HomeScreen extends StatelessWidget {
             ElevatedButton.icon(
               icon: const Icon(Icons.search),
               label: const Text('Manual Scan'),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const ManualScanScreen()),
-              ),
+              onPressed: () =>
+                  Navigator.push(context, MaterialPageRoute(builder: (context) => const ManualScanScreen())),
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
               icon: const Icon(Icons.radar),
               label: const Text('Real-time Scan'),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const RealTimeScanScreen()),
-              ),
+              onPressed: () =>
+                  Navigator.push(context, MaterialPageRoute(builder: (context) => const RealTimeScanScreen())),
             ),
           ],
         ),
@@ -217,13 +204,10 @@ class _RealTimeScanScreenState extends State<RealTimeScanScreen> {
 
   Future<void> _runScan() async {
     try {
-      final report = await _discoveryService.discover(
-        enableFallbackScan: false, // Skip slow subnet scan for real-time
-        onvifTimeout: const Duration(seconds: 2),
-      );
+      final report = await _discoveryService.discover(onvifTimeout: const Duration(seconds: 2));
       if (mounted) {
         setState(() {
-          // Since discover creates a new report each time, 
+          // Since discover creates a new report each time,
           // simply replacing the list will naturally drop cameras that are no longer found.
           _cameras = report.cameras;
         });
@@ -249,9 +233,7 @@ class _RealTimeScanScreenState extends State<RealTimeScanScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Real-time Scan'),
-      ),
+      appBar: AppBar(title: const Text('Real-time Scan')),
       body: Column(
         children: [
           Container(
@@ -277,7 +259,9 @@ class _RealTimeScanScreenState extends State<RealTimeScanScreen> {
                       return ListTile(
                         leading: const Icon(Icons.camera_alt, color: Colors.green),
                         title: Text(camera.name ?? 'Unknown Camera'),
-                        subtitle: Text('${camera.ip} - ${camera.supportedProtocols.map((e) => e.displayName).join(', ')}'),
+                        subtitle: Text(
+                          '${camera.ip} - ${camera.supportedProtocols.map((e) => e.displayName).join(', ')}',
+                        ),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () => _onCameraTapped(camera),
                       );
@@ -337,10 +321,8 @@ class _AuthDialogState extends State<AuthDialog> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => StreamListScreen(
-              cameraName: widget.camera.name ?? widget.camera.ip,
-              streams: streams,
-            ),
+            builder: (context) =>
+                StreamListScreen(cameraName: widget.camera.name ?? widget.camera.ip, streams: streams),
           ),
         );
       } else {
@@ -363,9 +345,7 @@ class _AuthDialogState extends State<AuthDialog> {
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.red),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: Colors.red));
   }
 
   @override
@@ -391,14 +371,9 @@ class _AuthDialogState extends State<AuthDialog> {
             hint: const Text('Protocol'),
             items: widget.camera.supportedProtocols.isNotEmpty
                 ? widget.camera.supportedProtocols
-                    .map((p) => DropdownMenuItem(value: p, child: Text(p.displayName)))
-                    .toList()
-                : [
-                    const DropdownMenuItem(
-                      value: CameraProtocol.generic,
-                      child: Text('Generic RTSP'),
-                    )
-                  ],
+                      .map((p) => DropdownMenuItem(value: p, child: Text(p.displayName)))
+                      .toList()
+                : [const DropdownMenuItem(value: CameraProtocol.generic, child: Text('Generic RTSP'))],
             onChanged: (val) {
               if (val != null) {
                 setState(() {
@@ -410,18 +385,11 @@ class _AuthDialogState extends State<AuthDialog> {
         ],
       ),
       actions: [
-        TextButton(
-          onPressed: _isAuthenticating ? null : () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
+        TextButton(onPressed: _isAuthenticating ? null : () => Navigator.pop(context), child: const Text('Cancel')),
         ElevatedButton(
           onPressed: _isAuthenticating ? null : _authenticate,
           child: _isAuthenticating
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
               : const Text('Connect'),
         ),
       ],
@@ -438,9 +406,7 @@ class StreamListScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Streams for $cameraName'),
-      ),
+      appBar: AppBar(title: Text('Streams for $cameraName')),
       body: ListView.builder(
         itemCount: streams.length,
         itemBuilder: (context, index) {
@@ -451,12 +417,7 @@ class StreamListScreen extends StatelessWidget {
             subtitle: Text(url, style: const TextStyle(fontSize: 12)),
             trailing: const Icon(Icons.play_arrow),
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => PlayerScreen(url: url),
-                ),
-              );
+              Navigator.push(context, MaterialPageRoute(builder: (context) => PlayerScreen(url: url)));
             },
           );
         },
@@ -508,15 +469,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Camera Stream'),
-      ),
+      appBar: AppBar(title: const Text('Camera Stream')),
       body: Center(
         child: _hasError
             ? const Text('Error playing stream', style: TextStyle(color: Colors.red))
-            : Video(
-                controller: _videoController,
-              ),
+            : Video(controller: _videoController),
       ),
       bottomNavigationBar: Container(
         padding: const EdgeInsets.all(16.0),
