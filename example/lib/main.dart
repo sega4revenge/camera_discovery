@@ -47,11 +47,11 @@ class _ManualScanScreenState extends State<ManualScanScreen> {
 
     try {
       final report = await _discoveryService.discover(
-        onProgress: (cameras, phase) {
+        onProgress: (cameras, phase, protocol) {
           if (!mounted) return;
           setState(() {
             _cameras = cameras;
-            _statusPhase = phase.displayName;
+            _statusPhase = phase.displayName(protocol);
           });
         },
       );
@@ -256,11 +256,13 @@ class _RealTimeScanScreenState extends State<RealTimeScanScreen> {
                     itemCount: _cameras.length,
                     itemBuilder: (context, index) {
                       final camera = _cameras[index];
+                      final brandLabel = camera.brand == CameraBrand.unknown ? 'Unknown brand' : camera.brand.displayName;
+                      final cameraLabel = camera.name ?? camera.model ?? brandLabel;
                       return ListTile(
                         leading: const Icon(Icons.camera_alt, color: Colors.green),
-                        title: Text(camera.name ?? 'Unknown Camera'),
+                        title: Text(cameraLabel),
                         subtitle: Text(
-                          '${camera.ip} - ${camera.supportedProtocols.map((e) => e.displayName).join(', ')}',
+                          '$brandLabel • ${camera.ip} - ${camera.supportedProtocols.map((e) => e.displayName).join(', ')}',
                         ),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () => _onCameraTapped(camera),
@@ -293,11 +295,19 @@ class _AuthDialogState extends State<AuthDialog> {
   @override
   void initState() {
     super.initState();
-    if (widget.camera.supportedProtocols.isNotEmpty) {
-      _selectedProtocol = widget.camera.supportedProtocols.first;
-    } else {
-      _selectedProtocol = CameraProtocol.generic;
+    _selectedProtocol = _defaultProtocolForCamera(widget.camera.supportedProtocols);
+  }
+
+  CameraProtocol _defaultProtocolForCamera(Set<CameraProtocol> supportedProtocols) {
+    if (supportedProtocols.contains(CameraProtocol.onvif)) {
+      return CameraProtocol.onvif;
     }
+
+    if (supportedProtocols.isNotEmpty) {
+      return supportedProtocols.first;
+    }
+
+    return CameraProtocol.generic;
   }
 
   Future<void> _authenticate() async {
@@ -310,6 +320,7 @@ class _AuthDialogState extends State<AuthDialog> {
         ip: widget.camera.ip,
         username: _usernameController.text,
         password: _passwordController.text,
+        brand: widget.camera.brand,
         protocol: _selectedProtocol,
         maxResults: 10,
       );
@@ -365,21 +376,23 @@ class _AuthDialogState extends State<AuthDialog> {
             obscureText: true,
           ),
           const SizedBox(height: 16),
-          DropdownButton<CameraProtocol>(
+          DropdownButtonFormField<CameraProtocol>(
             value: _selectedProtocol,
             isExpanded: true,
-            hint: const Text('Protocol'),
-            items: widget.camera.supportedProtocols.isNotEmpty
-                ? widget.camera.supportedProtocols
-                      .map((p) => DropdownMenuItem(value: p, child: Text(p.displayName)))
-                      .toList()
-                : [const DropdownMenuItem(value: CameraProtocol.generic, child: Text('Generic RTSP'))],
+            decoration: const InputDecoration(
+              labelText: 'Select protocol',
+              border: OutlineInputBorder(),
+            ),
+            items: (widget.camera.supportedProtocols.isNotEmpty
+                    ? widget.camera.supportedProtocols.toList()
+                    : [CameraProtocol.generic])
+                .map((protocol) => DropdownMenuItem(value: protocol, child: Text(protocol.displayName)))
+                .toList(),
             onChanged: (val) {
-              if (val != null) {
-                setState(() {
-                  _selectedProtocol = val;
-                });
-              }
+              if (val == null) return;
+              setState(() {
+                _selectedProtocol = val;
+              });
             },
           ),
         ],

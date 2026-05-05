@@ -7,4 +7,10 @@ void main() {
     expect(CameraDiscoveryService, isNotNull);
     expect(CameraAuthService, isNotNull);
   });
+
+  test('scan protocol enum is exported', () {
+    expect(CameraDiscoveryProtocol.multicast.displayName, 'Multicast');
+    expect(CameraDiscoveryProtocol.onvif.displayName, 'ONVIF');
+    expect(CameraDiscoveryProtocol.sadp.displayName, 'SADP');
+  });
 }

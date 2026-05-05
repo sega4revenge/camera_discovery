@@ -12,16 +12,17 @@ import 'camera_protocol.dart';
 import 'discovered_camera.dart';
 import 'discovery_report.dart';
 
-enum CameraDiscoveryPhase { multicast, onvif, validatingProtocols, completed }
+enum CameraDiscoveryPhase { scan, validatingProtocol, completed }
 
 extension CameraDiscoveryPhaseExtension on CameraDiscoveryPhase {
-  String get displayName {
+  String displayName([CameraDiscoveryProtocol? protocol]) {
     switch (this) {
-      case CameraDiscoveryPhase.multicast:
-        return 'mDNS / SADP...';
-      case CameraDiscoveryPhase.onvif:
-        return 'ONVIF WS-Discovery...';
-      case CameraDiscoveryPhase.validatingProtocols:
+      case CameraDiscoveryPhase.scan:
+        if (protocol == null) {
+          return 'Scanning...';
+        }
+        return 'Scanning ${protocol.displayName}...';
+      case CameraDiscoveryPhase.validatingProtocol:
         return 'Validating available protocols...';
       case CameraDiscoveryPhase.completed:
         return 'Completed';
@@ -61,92 +62,95 @@ class CameraDiscoveryService {
 
   Future<DiscoveryReport> discover({
     Duration onvifTimeout = const Duration(seconds: 4),
-    void Function(List<DiscoveredCamera> cameras, CameraDiscoveryPhase phase)? onProgress,
+    bool forceMulticast = true,
+    List<CameraDiscoveryProtocol> listProtocol = const [
+      CameraDiscoveryProtocol.multicast,
+      CameraDiscoveryProtocol.onvif,
+      CameraDiscoveryProtocol.sadp,
+    ],
+    void Function(List<DiscoveredCamera> cameras, CameraDiscoveryPhase phase, CameraDiscoveryProtocol? protocol)? onProgress,
   }) async {
     final startedAt = DateTime.now();
     final camerasByIp = <String, DiscoveredCamera>{};
     final ipByName = <String, String>{};
     final warnings = <String>[];
-    void notifyProgress(CameraDiscoveryPhase phase) =>
-        onProgress == null ? null : onProgress(sortCamerasByIpOctet(camerasByIp.values), phase);
+    void notifyProgress(CameraDiscoveryPhase phase, [CameraDiscoveryProtocol? protocol]) => onProgress == null
+        ? null
+        : onProgress(sortCamerasByIpOctet(camerasByIp.values), phase, protocol);
+    bool shouldRunProtocol(CameraDiscoveryProtocol protocol) => listProtocol.contains(protocol);
 
     try {
-      notifyProgress(CameraDiscoveryPhase.multicast);
-      // Run mDNS Bonjour and SADP in parallel — both are fast broadcast/multicast
-      // protocols, no reason to run them sequentially.
-      await Future.wait([
-        _discoverMdns(camerasByIp, ipByName, () => notifyProgress(CameraDiscoveryPhase.multicast)).catchError((e) {
-          warnings.add('mDNS/Bonjour discovery failed: $e');
-        }),
-        _discoverSadp(camerasByIp, ipByName, () => notifyProgress(CameraDiscoveryPhase.multicast)).catchError((e) {
-          warnings.add('SADP discovery failed: $e');
-        }),
-      ]);
-
-      notifyProgress(CameraDiscoveryPhase.onvif);
-      try {
-        // if (Platform.isIOS) {
-        //   warnings.add(
-        //     'ONVIF WS-Discovery is temporarily disabled on iOS to avoid the Multicast Entitlement requirement.',
-        //   );
-        // }
-
-        final onvifMatches = await _discoverOnvif(onvifTimeout);
-        for (final match in onvifMatches) {
-          final ip = extractIpv4FromXAddrs(match.xAddrs);
-          if (ip == null) continue;
-
-          final supportedProtocols = <CameraProtocol>{CameraProtocol.onvif};
-          final hw = match.hardware.toLowerCase();
-          final nameStr = match.name.toLowerCase();
-          final scopesStr = match.scopes.toString().toLowerCase();
-          final endpoint = match.endpointReference.address.toLowerCase();
-
-          final fullStr = '$hw | $nameStr | $scopesStr | $endpoint';
-          _log('ONVIF Match metadata for $ip: $fullStr');
-
-          if (fullStr.contains('dahua') ||
-              fullStr.contains('general dvr') ||
-              fullStr.contains('general nvr') ||
-              fullStr.contains('general_') ||
-              (hw == 'general' || nameStr == 'general')) {
-            supportedProtocols.add(CameraProtocol.dahua);
-          }
-
-          if (fullStr.contains('hikvision')) {
-            supportedProtocols.add(CameraProtocol.hikvision);
-          }
-
-          if (fullStr.contains('ezviz')) {
-            supportedProtocols.add(CameraProtocol.ezviz);
-          }
-
-          final newCam = DiscoveredCamera(
-            ip: ip,
-            source: CameraDiscoverySource.onvif,
-            name: match.name.isEmpty ? null : match.name,
-            onvifXAddr: match.xAddr,
-            supportedProtocols: supportedProtocols,
-          );
-
-          if (_addOrMergeCamera(newCam, camerasByIp, ipByName)) {
-            notifyProgress(CameraDiscoveryPhase.onvif);
-          }
-        }
-      } on SocketException catch (e) {
-        if (isNoRouteToHostError(e)) {
-          warnings.add('ONVIF multicast is unavailable on the current network (No route to host).');
-        } else {
-          warnings.add('ONVIF discovery failed: $e');
-        }
-      } catch (e) {
-        warnings.add('ONVIF discovery failed: $e');
+      if (shouldRunProtocol(CameraDiscoveryProtocol.multicast) || shouldRunProtocol(CameraDiscoveryProtocol.sadp)) {
+        notifyProgress(CameraDiscoveryPhase.scan);
       }
 
-      notifyProgress(CameraDiscoveryPhase.validatingProtocols);
+      if (shouldRunProtocol(CameraDiscoveryProtocol.multicast)) {
+        // Run mDNS Bonjour and SADP in parallel — both are fast broadcast/multicast protocols.
+        try {
+          notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.multicast);
+          await _discoverMdns(camerasByIp, ipByName, () => notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.multicast));
+        } catch (e) {
+          warnings.add('mDNS/Bonjour discovery failed: $e');
+        }
+      }
+
+      if (shouldRunProtocol(CameraDiscoveryProtocol.sadp)) {
+        try {
+          notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.sadp);
+          await _discoverSadp(camerasByIp, ipByName, () => notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.sadp));
+        } catch (e) {
+          warnings.add('SADP discovery failed: $e');
+        }
+      }
+
+      if (shouldRunProtocol(CameraDiscoveryProtocol.onvif)) {
+        notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.onvif);
+        try {
+          final onvifMatches = Platform.isIOS && !forceMulticast
+              ? const <ProbeMatch>[]
+              : await _discoverOnvif(onvifTimeout, forceMulticast: forceMulticast);
+
+          for (final match in onvifMatches) {
+            final ip = extractIpv4FromXAddrs(match.xAddrs);
+            if (ip == null) continue;
+
+            final supportedProtocols = <CameraProtocol>{CameraProtocol.onvif};
+            final brand = detectCameraBrand([
+              match.hardware,
+              match.name,
+              match.scopes.toString(),
+              match.endpointReference.address,
+            ]);
+            _log('ONVIF Match metadata for $ip: brand=${brand.displayName} name=${match.name}');
+
+            final newCam = DiscoveredCamera(
+              ip: ip,
+              source: CameraDiscoverySource.onvif,
+              brand: brand,
+              name: match.name.isEmpty ? null : match.name,
+              onvifXAddr: match.xAddr,
+              supportedProtocols: supportedProtocols,
+            );
+
+            if (_addOrMergeCamera(newCam, camerasByIp, ipByName)) {
+              notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.onvif);
+            }
+          }
+        } on SocketException catch (e) {
+          if (isNoRouteToHostError(e)) {
+            warnings.add('ONVIF multicast is unavailable on the current network (No route to host).');
+          } else {
+            warnings.add('ONVIF discovery failed: $e');
+          }
+        } catch (e) {
+          warnings.add('ONVIF discovery failed: $e');
+        }
+      }
+
+      notifyProgress(CameraDiscoveryPhase.validatingProtocol);
       try {
         final changed = await _detectProtocols(camerasByIp);
-        if (changed) notifyProgress(CameraDiscoveryPhase.validatingProtocols);
+        if (changed) notifyProgress(CameraDiscoveryPhase.validatingProtocol);
       } catch (e) {
         warnings.add('Protocol detection failed: $e');
       }
@@ -176,6 +180,7 @@ class CameraDiscoveryService {
     DiscoveredCamera mergeFields(DiscoveredCamera existing, DiscoveredCamera incoming) {
       final mergedModel = incoming.model ?? existing.model;
       final mergedSerial = incoming.serialNumber ?? existing.serialNumber;
+      final mergedBrand = incoming.brand != CameraBrand.unknown ? incoming.brand : existing.brand;
 
       String? mergedName = existing.name;
       if (mergedModel != null || mergedSerial != null) {
@@ -189,6 +194,7 @@ class CameraDiscoveryService {
       }
 
       return existing.copyWith(
+        brand: mergedBrand,
         name: mergedName,
         model: mergedModel,
         serialNumber: mergedSerial,
@@ -345,38 +351,29 @@ class CameraDiscoveryService {
     final deviceType = extract('DeviceType') ?? '';
     final manufacturerTag = (extract('Manufacturer') ?? '').toLowerCase();
 
-    CameraBrand brand = CameraBrand.unknown;
-    if (model.startsWith('CS-')) {
-      brand = CameraBrand.ezviz;
-    } else if (model.startsWith('DS-')) {
-      brand = CameraBrand.hikvision;
-    } else if (manufacturerTag == 'ezviz') {
-      brand = CameraBrand.ezviz;
-    } else if (manufacturerTag == 'hikvision') {
-      brand = CameraBrand.hikvision;
-    }
+    final brand = detectCameraBrand([model, manufacturerTag, deviceType]);
 
     final brandName = brand == CameraBrand.unknown ? '' : brand.displayName;
     final displayName = serialNumber.isNotEmpty
         ? '${brandName.isNotEmpty ? '$brandName ' : ''}$serialNumber'
         : '${brandName.isNotEmpty ? '$brandName ' : ''}$model';
 
-    final isEzviz = brand == CameraBrand.ezviz;
-    final protocols = <CameraProtocol>{if (isEzviz) CameraProtocol.ezviz else CameraProtocol.hikvision};
+    final protocols = <CameraProtocol>{CameraProtocol.generic};
 
-    // NVR / DVR devices also support ONVIF commonly
+    // NVR / DVR devices also support ONVIF commonly.
     if (deviceType.toLowerCase().contains('nvr') || deviceType.toLowerCase().contains('dvr')) {
       protocols.add(CameraProtocol.onvif);
     }
 
     _log(
-      'SADP parsed: ip=$ip mac=$mac model=$model serial=$serialNumber '
-      'isEzviz=$isEzviz protocols=${protocols.map((e) => e.displayName).join(",")}',
+      'SADP parsed: ip=$ip mac=$mac model=$model serial=$serialNumber brand=${brand.displayName} '
+      'protocols=${protocols.map((e) => e.displayName).join(",")} ',
     );
 
     return DiscoveredCamera(
       ip: ip,
       source: CameraDiscoverySource.sadp,
+      brand: brand,
       name: displayName,
       model: model,
       serialNumber: serialNumber,
@@ -394,11 +391,13 @@ class CameraDiscoveryService {
     _nsdConfigured = true;
   }
 
-  Future<List<ProbeMatch>> _discoverOnvif(Duration timeout) async {
-    // if (Platform.isIOS) {
-    //   // iOS blocks raw UDP multicast without dedicated entitlement.
-    //   return const <ProbeMatch>[];
-    // }
+  Future<List<ProbeMatch>> _discoverOnvif(
+    Duration timeout, {
+    required bool forceMulticast,
+  }) async {
+    if (Platform.isIOS && !forceMulticast) {
+      return const <ProbeMatch>[];
+    }
 
     final probe = MulticastProbe(timeout: timeout.inSeconds);
     await probe.probe();
@@ -452,6 +451,7 @@ class CameraDiscoveryService {
           final newCam = DiscoveredCamera(
             ip: ip,
             source: CameraDiscoverySource.mdns,
+            supportedProtocols: const {CameraProtocol.generic},
             name: name?.isNotEmpty == true ? name : null,
             rtspUri: 'rtsp://$ip:$port',
           );
@@ -497,51 +497,6 @@ class CameraDiscoveryService {
 
       if (cam.source == CameraDiscoverySource.onvif || cam.onvifXAddr != null) {
         protocols.add(CameraProtocol.onvif);
-      }
-
-      // Check Dahua via MAC OUI
-      final mac = cam.macAddress?.toUpperCase().replaceAll(':', '') ?? '';
-      if (mac.startsWith('5C02F5') ||
-          mac.startsWith('38AF29') ||
-          mac.startsWith('E0508B') ||
-          mac.startsWith('9002A9') ||
-          mac.startsWith('BC325F') ||
-          mac.startsWith('14A78B')) {
-        protocols.add(CameraProtocol.dahua);
-      }
-
-      // Check Hikvision via MAC OUI
-      if (mac.startsWith('A41437') ||
-          mac.startsWith('C056E3') ||
-          mac.startsWith('8CE748') ||
-          mac.startsWith('4411C2') ||
-          mac.startsWith('E866CB')) {
-        protocols.add(CameraProtocol.hikvision);
-      }
-
-      // Check EZVIZ via MAC OUI
-      if (mac.startsWith('D81A1D') ||
-          mac.startsWith('4CE173') ||
-          mac.startsWith('4401BB') ||
-          mac.startsWith('3C1D94') ||
-          mac.startsWith('3C0FB3') ||
-          mac.startsWith('18022D') ||
-          mac.startsWith('747FA3') ||
-          mac.startsWith('E868E7')) {
-        protocols.add(CameraProtocol.ezviz);
-      }
-
-      // Check Dahua via port
-      if (await _isPortOpen(cam.ip, 37777)) {
-        protocols.add(CameraProtocol.dahua);
-      }
-
-      // Check Hikvision / EZVIZ via port 8000 & 8443
-      // If SADP already identified it as EZVIZ, keep it. Otherwise default to Hikvision.
-      if (await _isPortOpen(cam.ip, 8000) || await _isPortOpen(cam.ip, 8443)) {
-        if (!protocols.contains(CameraProtocol.ezviz)) {
-          protocols.add(CameraProtocol.hikvision);
-        }
       }
 
       // Check Generic RTSP

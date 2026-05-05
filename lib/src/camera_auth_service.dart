@@ -36,6 +36,7 @@ class CameraAuthService {
     required String ip,
     required String username,
     required String password,
+    CameraBrand brand = CameraBrand.unknown,
     CameraProtocol protocol = CameraProtocol.onvif,
     String? rtspPort,
     int maxResults = 1,
@@ -80,10 +81,10 @@ class CameraAuthService {
       throw Exception('Unable to fetch exact RTSP stream from camera and fallback is disabled.');
     }
 
-    // 3. Fallback: Guess URLs based on the specific camera protocol
-    if (protocol != CameraProtocol.onvif) {
-      final protocolFallback = _generateRtspLinksForProtocol(protocol, ip, username, password, port);
-      final playable = await _findPlayableRtspLinks(protocolFallback, maxResults: effectiveMaxResults);
+    // 3. Fallback: Guess URLs based on the detected brand.
+    final brandFallback = _generateRtspLinksForBrand(brand, ip, username, password, port);
+    if (brandFallback.isNotEmpty) {
+      final playable = await _findPlayableRtspLinks(brandFallback, maxResults: effectiveMaxResults);
       if (playable.isNotEmpty) {
         return playable;
       }
@@ -119,20 +120,6 @@ class CameraAuthService {
     final auth = '${Uri.encodeComponent(username)}:${Uri.encodeComponent(password)}';
 
     switch (protocol) {
-      case CameraProtocol.dahua:
-        return [
-          'rtsp://$auth@$ip:$port/cam/realmonitor?channel=1&subtype=0',
-          'rtsp://$auth@$ip:$port/cam/realmonitor?channel=1&subtype=1',
-        ];
-      case CameraProtocol.hikvision:
-        return ['rtsp://$auth@$ip:$port/Streaming/Channels/101', 'rtsp://$auth@$ip:$port/Streaming/Channels/102'];
-      case CameraProtocol.ezviz:
-        return [
-          'rtsp://$auth@$ip:$port/h264_stream',
-          'rtsp://$auth@$ip:$port/h265_stream',
-          // Sometimes EZVIZ uses Hikvision's format too
-          'rtsp://$auth@$ip:$port/Streaming/Channels/101',
-        ];
       case CameraProtocol.onvif:
       case CameraProtocol.generic:
         return [
@@ -147,6 +134,34 @@ class CameraAuthService {
           'rtsp://$auth@$ip:$port/stream2',
           'rtsp://$auth@$ip:$port/live0', // Eufy NAS (RTSP) stream
         ];
+    }
+  }
+
+  List<String> _generateRtspLinksForBrand(
+    CameraBrand brand,
+    String ip,
+    String username,
+    String password,
+    String port,
+  ) {
+    final auth = '${Uri.encodeComponent(username)}:${Uri.encodeComponent(password)}';
+
+    switch (brand) {
+      case CameraBrand.dahua:
+        return [
+          'rtsp://$auth@$ip:$port/cam/realmonitor?channel=1&subtype=0',
+          'rtsp://$auth@$ip:$port/cam/realmonitor?channel=1&subtype=1',
+        ];
+      case CameraBrand.hikvision:
+        return ['rtsp://$auth@$ip:$port/Streaming/Channels/101', 'rtsp://$auth@$ip:$port/Streaming/Channels/102'];
+      case CameraBrand.ezviz:
+        return [
+          'rtsp://$auth@$ip:$port/h264_stream',
+          'rtsp://$auth@$ip:$port/h265_stream',
+          'rtsp://$auth@$ip:$port/Streaming/Channels/101',
+        ];
+      case CameraBrand.unknown:
+        return const [];
     }
   }
 

@@ -6,6 +6,7 @@ class DiscoveredCamera {
   const DiscoveredCamera({
     required this.ip,
     required this.source,
+    this.brand = CameraBrand.unknown,
     this.name,
     this.model,
     this.serialNumber,
@@ -16,6 +17,7 @@ class DiscoveredCamera {
   });
 
   final String ip;
+  final CameraBrand brand;
   final String? name;
   final String? model;
   final String? serialNumber;
@@ -27,6 +29,7 @@ class DiscoveredCamera {
 
   DiscoveredCamera copyWith({
     String? ip,
+    CameraBrand? brand,
     String? name,
     String? model,
     String? serialNumber,
@@ -38,6 +41,7 @@ class DiscoveredCamera {
   }) {
     return DiscoveredCamera(
       ip: ip ?? this.ip,
+      brand: brand ?? this.brand,
       name: name ?? this.name,
       model: model ?? this.model,
       serialNumber: serialNumber ?? this.serialNumber,

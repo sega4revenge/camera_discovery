@@ -1,9 +1,25 @@
 enum CameraProtocol {
   onvif,
-  dahua,
-  hikvision,
-  ezviz,
   generic,
+}
+
+enum CameraDiscoveryProtocol {
+  multicast,
+  onvif,
+  sadp,
+}
+
+extension CameraDiscoveryProtocolExtension on CameraDiscoveryProtocol {
+  String get displayName {
+    switch (this) {
+      case CameraDiscoveryProtocol.multicast:
+        return 'Multicast';
+      case CameraDiscoveryProtocol.onvif:
+        return 'ONVIF';
+      case CameraDiscoveryProtocol.sadp:
+        return 'SADP';
+    }
+  }
 }
 
 extension CameraProtocolExtension on CameraProtocol {
@@ -11,22 +27,34 @@ extension CameraProtocolExtension on CameraProtocol {
     switch (this) {
       case CameraProtocol.onvif:
         return 'ONVIF';
-      case CameraProtocol.dahua:
-        return 'Dahua';
-      case CameraProtocol.hikvision:
-        return 'Hikvision';
-      case CameraProtocol.ezviz:
-        return 'EZVIZ';
       case CameraProtocol.generic:
         return 'Generic RTSP';
     }
   }
 }
 
+CameraBrand detectCameraBrand(Iterable<String?> values) {
+  final merged = values.whereType<String>().join(' ').toLowerCase();
+
+  if (merged.contains('dahua') || merged.contains('general dvr') || merged.contains('general nvr') || merged.contains('general_')) {
+    return CameraBrand.dahua;
+  }
+
+  if (merged.contains('hikvision') || merged.startsWith('ds-')) {
+    return CameraBrand.hikvision;
+  }
+
+  if (merged.contains('ezviz') || merged.startsWith('cs-')) {
+    return CameraBrand.ezviz;
+  }
+
+  return CameraBrand.unknown;
+}
+
 enum CameraBrand {
-  ezviz,
-  hikvision,
   dahua,
+  hikvision,
+  ezviz,
   unknown,
 }
 
