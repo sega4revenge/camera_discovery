@@ -436,13 +436,13 @@ class PlayerScreen extends StatefulWidget {
 }
 
 class _PlayerScreenState extends State<PlayerScreen> {
-  late final Player _player = Player();
+  late final Player _player = Player(configuration: const PlayerConfiguration(bufferSize: 128 * 1024));
   late final VideoController _videoController = VideoController(
     _player,
     configuration: const VideoControllerConfiguration(
       // Tạm tắt hardware acceleration để sửa lỗi EGL_BAD_ATTRIBUTE trên Android Emulator.
       // Lưu ý: Chỉ nên dùng khi test trên máy ảo. Khi build lên máy thật, hãy đổi thành true (hoặc xóa dòng này đi).
-      enableHardwareAcceleration: false,
+      enableHardwareAcceleration: true,
     ),
   );
   bool _hasError = false;
@@ -450,7 +450,40 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void initState() {
     super.initState();
-    _player.open(Media(widget.url), play: true);
+
+    configPlayer();
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  Future<void> configPlayer() async {
+    final extras = {
+      'network': {'rtsp_transport': 'udp', 'max_delay': '0', 'reorder_queue_size': '0', 'buffer_size': '2'},
+      'ffmpeg': {
+        'fflags': 'nobuffer+discardcorrupt',
+        'flags': 'low_delay',
+        'probesize': '32',
+        'analyzeduration': '0',
+        'an': '1',
+        'vd_flags': 'skip_loop_filter',
+        'framedrop': 'decoder+drop',
+        'sync': 'ext',
+      },
+    };
+    if (_player.platform is NativePlayer) {
+      final native = _player.platform as NativePlayer;
+      await native.setProperty('profile', 'low-latency');
+      await native.open(Media(widget.url, extras: extras), play: true);
+    } else {
+      await _player.open(Media(widget.url, extras: extras), play: true);
+    }
+
+    await _player.setAudioTrack(AudioTrack.no());
+
     _player.stream.error.listen((event) {
       if (!_hasError) {
         setState(() {
@@ -458,12 +491,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
         });
       }
     });
-  }
-
-  @override
-  void dispose() {
-    _player.dispose();
-    super.dispose();
   }
 
   @override
