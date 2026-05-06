@@ -68,15 +68,15 @@ class CameraDiscoveryService {
       CameraDiscoveryProtocol.onvif,
       CameraDiscoveryProtocol.sadp,
     ],
-    void Function(List<DiscoveredCamera> cameras, CameraDiscoveryPhase phase, CameraDiscoveryProtocol? protocol)? onProgress,
+    void Function(List<DiscoveredCamera> cameras, CameraDiscoveryPhase phase, CameraDiscoveryProtocol? protocol)?
+    onProgress,
   }) async {
     final startedAt = DateTime.now();
     final camerasByIp = <String, DiscoveredCamera>{};
     final ipByName = <String, String>{};
     final warnings = <String>[];
-    void notifyProgress(CameraDiscoveryPhase phase, [CameraDiscoveryProtocol? protocol]) => onProgress == null
-        ? null
-        : onProgress(sortCamerasByIpOctet(camerasByIp.values), phase, protocol);
+    void notifyProgress(CameraDiscoveryPhase phase, [CameraDiscoveryProtocol? protocol]) =>
+        onProgress == null ? null : onProgress(sortCamerasByIpOctet(camerasByIp.values), phase, protocol);
     bool shouldRunProtocol(CameraDiscoveryProtocol protocol) => listProtocol.contains(protocol);
 
     try {
@@ -88,7 +88,11 @@ class CameraDiscoveryService {
         // Run mDNS Bonjour and SADP in parallel — both are fast broadcast/multicast protocols.
         try {
           notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.multicast);
-          await _discoverMdns(camerasByIp, ipByName, () => notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.multicast));
+          await _discoverMdns(
+            camerasByIp,
+            ipByName,
+            () => notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.multicast),
+          );
         } catch (e) {
           warnings.add('mDNS/Bonjour discovery failed: $e');
         }
@@ -97,7 +101,11 @@ class CameraDiscoveryService {
       if (shouldRunProtocol(CameraDiscoveryProtocol.sadp)) {
         try {
           notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.sadp);
-          await _discoverSadp(camerasByIp, ipByName, () => notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.sadp));
+          await _discoverSadp(
+            camerasByIp,
+            ipByName,
+            () => notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.sadp),
+          );
         } catch (e) {
           warnings.add('SADP discovery failed: $e');
         }
@@ -391,10 +399,7 @@ class CameraDiscoveryService {
     _nsdConfigured = true;
   }
 
-  Future<List<ProbeMatch>> _discoverOnvif(
-    Duration timeout, {
-    required bool forceMulticast,
-  }) async {
+  Future<List<ProbeMatch>> _discoverOnvif(Duration timeout, {required bool forceMulticast}) async {
     if (Platform.isIOS && !forceMulticast) {
       return const <ProbeMatch>[];
     }
@@ -432,7 +437,10 @@ class CameraDiscoveryService {
     var changed = false;
 
     try {
-      discovery = await startDiscovery(serviceType, ipLookupType: IpLookupType.v4);
+      discovery = await startDiscovery(serviceType, ipLookupType: IpLookupType.v4).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw TimeoutException('startDiscovery timed out for serviceType=$serviceType after 5s'),
+      );
 
       discovery.addServiceListener((service, status) async {
         if (status != ServiceStatus.found) {
@@ -459,16 +467,49 @@ class CameraDiscoveryService {
           if (_addOrMergeCamera(newCam, camerasByIp, ipByName)) {
             changed = true;
           }
-        } catch (_) {}
+        } catch (e, st) {
+          _log(
+            'mDNS resolve/listener error for serviceType=$serviceType '
+            'service=${service.name ?? "<unknown>"}: ${e.runtimeType}: $e\n$st',
+            isCritical: true,
+          );
+        }
       });
 
       await Future<void>.delayed(_mdnsDiscoveryWindow);
-    } catch (_) {
+    } on TimeoutException catch (e, st) {
+      _log('mDNS startDiscovery timeout for serviceType=$serviceType: $e\n$st', isCritical: true);
+      Error.throwWithStackTrace(TimeoutException('mDNS startDiscovery timeout for serviceType=$serviceType: $e'), st);
+    } on SocketException catch (e, st) {
+      _log(
+        'mDNS socket error for serviceType=$serviceType: ${e.message} '
+        '(osError=${e.osError})\n$st',
+        isCritical: true,
+      );
+      Error.throwWithStackTrace(
+        Exception(
+          'mDNS socket error for serviceType=$serviceType: ${e.message} '
+          '(osError=${e.osError})',
+        ),
+        st,
+      );
+    } catch (e, st) {
+      _log('mDNS discovery failed for serviceType=$serviceType: ${e.runtimeType}: $e\n$st', isCritical: true);
+      Error.throwWithStackTrace(
+        Exception('mDNS discovery failed for serviceType=$serviceType: ${e.runtimeType}: $e'),
+        st,
+      );
     } finally {
       if (discovery != null) {
         try {
           await stopDiscovery(discovery);
-        } catch (_) {}
+        } catch (e, st) {
+          _log(
+            'mDNS stopDiscovery failed for serviceType=$serviceType: '
+            '${e.runtimeType}: $e\n$st',
+            isCritical: true,
+          );
+        }
       }
     }
 
