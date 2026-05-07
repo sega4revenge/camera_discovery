@@ -437,13 +437,13 @@ class CameraDiscoveryService {
 
           final port = resolved.port ?? 554;
           final name = resolved.name;
-          
+
           // Parse device name to extract brand and serial number
           final parsed = parseDeviceNameForBrandAndSerial(name);
           final parsedBrand = parsed['brand'];
           final parsedModel = parsed['model'];
           final serialNumber = parsed['serialNumber'];
-          
+
           // Detect brand from parsed brand or model
           final brand = parsedBrand != null || parsedModel != null
               ? detectCameraBrand([parsedBrand ?? '', parsedModel ?? ''])
