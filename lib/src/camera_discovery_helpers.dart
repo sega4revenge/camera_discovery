@@ -63,3 +63,37 @@ bool isNoRouteToHostError(SocketException error) {
 
   return error.message.toLowerCase().contains('no route to host');
 }
+
+/// Parses a device name (typically from mDNS) to extract brand, model, and serial number.
+/// Expected format: "[BRAND] [MODEL] - [SERIAL]" or "[BRAND] [MODEL]"
+/// Returns a map with keys 'brand', 'model', and 'serialNumber'.
+/// Example: "HIKVISION DS-2CD1343G0-IUF - L18623820"
+///   → {'brand': 'HIKVISION', 'model': 'DS-2CD1343G0-IUF', 'serialNumber': 'L18623820'}
+Map<String, String?> parseDeviceNameForBrandAndSerial(String? name) {
+  if (name == null || name.trim().isEmpty) {
+    return {'brand': null, 'model': null, 'serialNumber': null};
+  }
+
+  final trimmed = name.trim();
+
+  // Match pattern: [BRAND] [MODEL] - [SERIAL]
+  final matchWithSerial = RegExp(r'^(\S+)\s+(.+?)\s*-\s*([A-Z0-9]+)$', caseSensitive: false).firstMatch(trimmed);
+
+  if (matchWithSerial != null) {
+    final brand = matchWithSerial.group(1)?.trim();
+    final model = matchWithSerial.group(2)?.trim();
+    final serial = matchWithSerial.group(3)?.trim();
+    return {'brand': brand, 'model': model, 'serialNumber': serial};
+  }
+
+  // No dash found, try to extract brand as first word
+  final parts = trimmed.split(RegExp(r'\s+'));
+  if (parts.length > 1) {
+    final brand = parts.first;
+    final model = parts.sublist(1).join(' ');
+    return {'brand': brand, 'model': model, 'serialNumber': null};
+  }
+
+  // Single word, treat as model only
+  return {'brand': null, 'model': trimmed, 'serialNumber': null};
+}

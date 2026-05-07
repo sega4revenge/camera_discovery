@@ -348,11 +348,6 @@ class CameraDiscoveryService {
 
     final brand = detectCameraBrand([model, manufacturerTag, deviceType]);
 
-    final brandName = brand == CameraBrand.unknown ? '' : brand.displayName;
-    final displayName = serialNumber.isNotEmpty
-        ? '${brandName.isNotEmpty ? '$brandName ' : ''}$serialNumber'
-        : '${brandName.isNotEmpty ? '$brandName ' : ''}$model';
-
     final protocols = <CameraProtocol>{CameraProtocol.generic};
 
     // NVR / DVR devices also support ONVIF commonly.
@@ -442,11 +437,25 @@ class CameraDiscoveryService {
 
           final port = resolved.port ?? 554;
           final name = resolved.name;
+          
+          // Parse device name to extract brand and serial number
+          final parsed = parseDeviceNameForBrandAndSerial(name);
+          final parsedBrand = parsed['brand'];
+          final parsedModel = parsed['model'];
+          final serialNumber = parsed['serialNumber'];
+          
+          // Detect brand from parsed brand or model
+          final brand = parsedBrand != null || parsedModel != null
+              ? detectCameraBrand([parsedBrand ?? '', parsedModel ?? ''])
+              : CameraBrand.unknown;
+
           final newCam = DiscoveredCamera(
             ip: ip,
             source: CameraDiscoverySource.mdns,
+            brand: brand,
+            model: parsedModel,
+            serialNumber: serialNumber,
             supportedProtocols: const {CameraProtocol.generic},
-
             rtspUri: 'rtsp://$ip:$port',
           );
 
