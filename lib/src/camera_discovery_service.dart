@@ -135,7 +135,6 @@ class CameraDiscoveryService {
               ip: ip,
               source: CameraDiscoverySource.onvif,
               brand: brand,
-              name: match.name.isEmpty ? null : match.name,
               onvifXAddr: match.xAddr,
               supportedProtocols: supportedProtocols,
             );
@@ -190,20 +189,8 @@ class CameraDiscoveryService {
       final mergedSerial = incoming.serialNumber ?? existing.serialNumber;
       final mergedBrand = incoming.brand != CameraBrand.unknown ? incoming.brand : existing.brand;
 
-      String? mergedName = existing.name;
-      if (mergedModel != null || mergedSerial != null) {
-        final m = mergedModel ?? '';
-        final s = mergedSerial ?? '';
-        if (m.isNotEmpty || s.isNotEmpty) {
-          mergedName = '$m $s'.trim();
-        }
-      } else {
-        mergedName = incoming.name ?? existing.name;
-      }
-
       return existing.copyWith(
         brand: mergedBrand,
-        name: mergedName,
         model: mergedModel,
         serialNumber: mergedSerial,
         onvifXAddr: incoming.onvifXAddr ?? existing.onvifXAddr,
@@ -382,7 +369,6 @@ class CameraDiscoveryService {
       ip: ip,
       source: CameraDiscoverySource.sadp,
       brand: brand,
-      name: displayName,
       model: model,
       serialNumber: serialNumber,
       macAddress: mac,
@@ -460,7 +446,7 @@ class CameraDiscoveryService {
             ip: ip,
             source: CameraDiscoverySource.mdns,
             supportedProtocols: const {CameraProtocol.generic},
-            name: name?.isNotEmpty == true ? name : null,
+
             rtspUri: 'rtsp://$ip:$port',
           );
 

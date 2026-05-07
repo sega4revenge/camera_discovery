@@ -7,7 +7,6 @@ class DiscoveredCamera {
     required this.ip,
     required this.source,
     this.brand = CameraBrand.unknown,
-    this.name,
     this.model,
     this.serialNumber,
     this.macAddress,
@@ -18,7 +17,6 @@ class DiscoveredCamera {
 
   final String ip;
   final CameraBrand brand;
-  final String? name;
   final String? model;
   final String? serialNumber;
   final String? macAddress;
@@ -27,10 +25,22 @@ class DiscoveredCamera {
   final String? rtspUri;
   final Set<CameraProtocol> supportedProtocols;
 
+  /// Computed display name derived from `brand` and `serialNumber`.
+  /// Falls back to `model` when brand/serial are not available.
+  String? get name {
+    final brandName = brand == CameraBrand.unknown ? null : brand.displayName;
+    final s = serialNumber;
+    if (brandName != null && s != null && s.isNotEmpty) {
+      return '$brandName $s';
+    }
+    if (brandName != null) return brandName;
+    if (model != null && model!.isNotEmpty) return model;
+    return null;
+  }
+
   DiscoveredCamera copyWith({
     String? ip,
     CameraBrand? brand,
-    String? name,
     String? model,
     String? serialNumber,
     String? macAddress,
@@ -42,7 +52,6 @@ class DiscoveredCamera {
     return DiscoveredCamera(
       ip: ip ?? this.ip,
       brand: brand ?? this.brand,
-      name: name ?? this.name,
       model: model ?? this.model,
       serialNumber: serialNumber ?? this.serialNumber,
       macAddress: macAddress ?? this.macAddress,

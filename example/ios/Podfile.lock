@@ -74,7 +74,7 @@ SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   media_kit_libs_ios_video: 5a18affdb97d1f5d466dc79988b13eff6c5e2854
   media_kit_video: 1746e198cb697d1ffb734b1d05ec429d1fcd1474
-  nsd_ios: eda5491e87ba9e2cd59636770b5953149eb93c5c
+  nsd_ios: d2eedc5904efa30a0e36d42f2501a39fd7fbe73f
   package_info_plus: af8e2ca6888548050f16fa2f1938db7b5a5df499
   sqlite3: a51c07cf16e023d6c48abd5e5791a61a47354921
   sqlite3_flutter_libs: b3e120efe9a82017e5552a620f696589ed4f62ab
