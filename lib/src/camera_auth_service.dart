@@ -12,13 +12,13 @@ class CameraAuthService {
   /// Returns true if successful, throws if unauthorized, or returns true if ONVIF is disabled
   /// (since we cannot easily verify digest auth without it).
   Future<bool> verifyCredentials({
-    required String ip, 
-    required String username, 
+    required String ip,
+    required String username,
     required String password,
     String? rtspPort,
   }) async {
     try {
-      final onvif = await Onvif.connect(host: ip, username: username, password: password);
+      await Onvif.connect(host: ip, username: username, password: password);
       return true;
     } catch (e) {
       final errorMsg = e.toString().toLowerCase();
@@ -30,6 +30,13 @@ class CameraAuthService {
       final portStr = await _resolveRtspPort(ip, rtspPort);
       return await RtspAuthVerifier.verifyRtspAuth(ip, username, password, port: int.tryParse(portStr) ?? 554);
     }
+  }
+
+  /// Checks whether a given RTSP URL is reachable and responds like a playable stream.
+  ///
+  /// Returns true for RTSP responses such as 200, 401, or 403, and false for invalid or unreachable URLs.
+  Future<bool> validateRtspLink(String streamUri) async {
+    return _isRtspPlayable(streamUri);
   }
 
   Future<List<String>> getRtspStreams({
@@ -109,7 +116,6 @@ class CameraAuthService {
     return resolved;
   }
 
-
   List<String> _generateRtspLinksForProtocol(
     CameraProtocol protocol,
     String ip,
@@ -137,13 +143,7 @@ class CameraAuthService {
     }
   }
 
-  List<String> _generateRtspLinksForBrand(
-    CameraBrand brand,
-    String ip,
-    String username,
-    String password,
-    String port,
-  ) {
+  List<String> _generateRtspLinksForBrand(CameraBrand brand, String ip, String username, String password, String port) {
     final auth = '${Uri.encodeComponent(username)}:${Uri.encodeComponent(password)}';
 
     switch (brand) {
