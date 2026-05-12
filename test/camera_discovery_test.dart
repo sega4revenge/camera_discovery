@@ -14,16 +14,6 @@ void main() {
     expect(CameraDiscoveryProtocol.sadp.displayName, 'SADP');
   });
 
-  test('local network permission result is exported', () {
-    const result = LocalNetworkPermissionResult(
-      status: LocalNetworkPermissionStatus.denied,
-      message: 'Denied',
-    );
-
-    expect(result.status, LocalNetworkPermissionStatus.denied);
-    expect(result.canScan, isFalse);
-  });
-
   group('DiscoveredCamera serialNumber model-stripping', () {
     test('strips exact model from the beginning of serialNumber', () {
       final camera = DiscoveredCamera(
@@ -92,8 +82,7 @@ void main() {
         source: CameraDiscoverySource.sadp,
         brand: CameraBrand.ezviz,
         model: 'CS-C3TN-A0-1H3WKFL-B',
-        serialNumber:
-            'CS-C3TN-A0-1H3WKFL-B0120220527CCRRK02854364', // Note: Model will be stripped from serial first
+        serialNumber: 'CS-C3TN-A0-1H3WKFL-B0120220527CCRRK02854364', // Note: Model will be stripped from serial first
       );
       expect(camera.name, 'EZVIZ CS-C3TN-A0-1H3WKFL-B - 0120220527CCRRK02854364');
     });

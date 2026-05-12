@@ -11,7 +11,6 @@ import 'camera_discovery_helpers.dart';
 import 'camera_protocol.dart';
 import 'discovered_camera.dart';
 import 'discovery_report.dart';
-import 'local_network_permission_result.dart';
 
 enum CameraDiscoveryPhase { scan, validatingProtocol, completed }
 
@@ -51,7 +50,7 @@ class CameraDiscoveryService {
     '_psia._tcp',
     '_onvif._tcp',
     '_rtsp._tcp',
-    // '_http._tcp',
+    '_http._tcp',
     '_cgi._tcp',
     '_axis-video._tcp',
     '_camera._tcp',
@@ -64,50 +63,24 @@ class CameraDiscoveryService {
   Future<DiscoveryReport> discover({
     Duration onvifTimeout = const Duration(seconds: 4),
     bool forceMulticast = true,
-    bool checkLocalNetworkPermissionBeforeScan = true,
     List<CameraDiscoveryProtocol> listProtocol = const [
       CameraDiscoveryProtocol.multicast,
       CameraDiscoveryProtocol.onvif,
       CameraDiscoveryProtocol.sadp,
     ],
-    void Function(
-      List<DiscoveredCamera> cameras,
-      CameraDiscoveryPhase phase,
-      CameraDiscoveryProtocol? protocol,
-    )?
+    void Function(List<DiscoveredCamera> cameras, CameraDiscoveryPhase phase, CameraDiscoveryProtocol? protocol)?
     onProgress,
   }) async {
     final startedAt = DateTime.now();
     final camerasByIp = <String, DiscoveredCamera>{};
     final ipByName = <String, String>{};
     final warnings = <String>[];
-    void notifyProgress(
-      CameraDiscoveryPhase phase, [
-      CameraDiscoveryProtocol? protocol,
-    ]) => onProgress == null
-        ? null
-        : onProgress(sortCamerasByIpOctet(camerasByIp.values), phase, protocol);
-    bool shouldRunProtocol(CameraDiscoveryProtocol protocol) =>
-        listProtocol.contains(protocol);
-
-    if (checkLocalNetworkPermissionBeforeScan) {
-      final permissionResult = await checkLocalNetworkPermission();
-      if (!permissionResult.canScan) {
-        return DiscoveryReport(
-          cameras: const [],
-          startedAt: startedAt,
-          finishedAt: DateTime.now(),
-          usedFallbackScan: false,
-          error:
-              permissionResult.message ??
-              'Local network permission was denied. Please allow local network access and try again.',
-        );
-      }
-    }
+    void notifyProgress(CameraDiscoveryPhase phase, [CameraDiscoveryProtocol? protocol]) =>
+        onProgress == null ? null : onProgress(sortCamerasByIpOctet(camerasByIp.values), phase, protocol);
+    bool shouldRunProtocol(CameraDiscoveryProtocol protocol) => listProtocol.contains(protocol);
 
     try {
-      if (shouldRunProtocol(CameraDiscoveryProtocol.multicast) ||
-          shouldRunProtocol(CameraDiscoveryProtocol.sadp)) {
+      if (shouldRunProtocol(CameraDiscoveryProtocol.multicast) || shouldRunProtocol(CameraDiscoveryProtocol.sadp)) {
         notifyProgress(CameraDiscoveryPhase.scan);
       }
 
@@ -118,10 +91,7 @@ class CameraDiscoveryService {
           await _discoverMdns(
             camerasByIp,
             ipByName,
-            () => notifyProgress(
-              CameraDiscoveryPhase.scan,
-              CameraDiscoveryProtocol.multicast,
-            ),
+            () => notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.multicast),
           );
         } catch (e) {
           warnings.add('mDNS/Bonjour discovery failed: $e');
@@ -159,9 +129,7 @@ class CameraDiscoveryService {
               match.scopes.toString(),
               match.endpointReference.address,
             ]);
-            _log(
-              'ONVIF Match metadata for $ip: brand=${brand.displayName} name=${match.name}',
-            );
+            _log('ONVIF Match metadata for $ip: brand=${brand.displayName} name=${match.name}');
 
             final newCam = DiscoveredCamera(
               ip: ip,
@@ -177,9 +145,7 @@ class CameraDiscoveryService {
           }
         } on SocketException catch (e) {
           if (isNoRouteToHostError(e)) {
-            warnings.add(
-              'ONVIF multicast is unavailable on the current network (No route to host).',
-            );
+            warnings.add('ONVIF multicast is unavailable on the current network (No route to host).');
           } else {
             warnings.add('ONVIF discovery failed: $e');
           }
@@ -209,79 +175,6 @@ class CameraDiscoveryService {
     );
   }
 
-  Future<LocalNetworkPermissionResult> checkLocalNetworkPermission({
-    Duration timeout = const Duration(seconds: 2),
-  }) async {
-    if (!(Platform.isIOS || Platform.isAndroid)) {
-      return const LocalNetworkPermissionResult(
-        status: LocalNetworkPermissionStatus.unsupportedPlatform,
-        message: 'Local network runtime permission check is only applied on iOS/Android.',
-      );
-    }
-
-    if (Platform.isAndroid) {
-      return const LocalNetworkPermissionResult(
-        status: LocalNetworkPermissionStatus.notRequired,
-        message:
-            'Android does not require local network runtime permission for this scan flow.',
-      );
-    }
-
-    Discovery? discovery;
-    try {
-      _configureNsdIfNeeded();
-
-      // Starting Bonjour discovery triggers Local Network authorization on iOS.
-      discovery = await startDiscovery(
-        '_onvif._tcp',
-        ipLookupType: IpLookupType.v4,
-      ).timeout(timeout);
-      return const LocalNetworkPermissionResult(
-        status: LocalNetworkPermissionStatus.granted,
-        message: 'Local network permission granted.',
-      );
-    } on TimeoutException {
-      return const LocalNetworkPermissionResult(
-        status: LocalNetworkPermissionStatus.unknown,
-        message:
-            'Unable to determine local network permission in time. Scan will continue.',
-      );
-    } on SocketException catch (e) {
-      final message = (e.osError?.message ?? e.message).toLowerCase();
-      if (message.contains('operation not permitted') ||
-          message.contains('not permitted')) {
-        return const LocalNetworkPermissionResult(
-          status: LocalNetworkPermissionStatus.denied,
-          message: 'Local network access is denied on iOS. Please enable it in Settings.',
-        );
-      }
-
-      return LocalNetworkPermissionResult(
-        status: LocalNetworkPermissionStatus.unknown,
-        message: 'Local network permission check error: $e. Scan will continue.',
-      );
-    } catch (e) {
-      final lower = e.toString().toLowerCase();
-      if (lower.contains('operation not permitted') || lower.contains('not permitted')) {
-        return const LocalNetworkPermissionResult(
-          status: LocalNetworkPermissionStatus.denied,
-          message: 'Local network access is denied on iOS. Please enable it in Settings.',
-        );
-      }
-
-      return LocalNetworkPermissionResult(
-        status: LocalNetworkPermissionStatus.unknown,
-        message: 'Local network permission check failed: $e. Scan will continue.',
-      );
-    } finally {
-      if (discovery != null) {
-        try {
-          await stopDiscovery(discovery);
-        } catch (_) {}
-      }
-    }
-  }
-
   bool _addOrMergeCamera(
     DiscoveredCamera newCam,
     Map<String, DiscoveredCamera> camerasByIp,
@@ -294,9 +187,7 @@ class CameraDiscoveryService {
     DiscoveredCamera mergeFields(DiscoveredCamera existing, DiscoveredCamera incoming) {
       final mergedModel = incoming.model ?? existing.model;
       final mergedSerial = incoming.serialNumber ?? existing.serialNumber;
-      final mergedBrand = incoming.brand != CameraBrand.unknown
-          ? incoming.brand
-          : existing.brand;
+      final mergedBrand = incoming.brand != CameraBrand.unknown ? incoming.brand : existing.brand;
 
       return existing.copyWith(
         brand: mergedBrand,
@@ -305,9 +196,7 @@ class CameraDiscoveryService {
         onvifXAddr: incoming.onvifXAddr ?? existing.onvifXAddr,
         rtspUri: incoming.rtspUri ?? existing.rtspUri,
         macAddress: incoming.macAddress ?? existing.macAddress,
-        supportedProtocols: existing.supportedProtocols.union(
-          incoming.supportedProtocols,
-        ),
+        supportedProtocols: existing.supportedProtocols.union(incoming.supportedProtocols),
       );
     }
 
@@ -462,8 +351,7 @@ class CameraDiscoveryService {
     final protocols = <CameraProtocol>{CameraProtocol.generic};
 
     // NVR / DVR devices also support ONVIF commonly.
-    if (deviceType.toLowerCase().contains('nvr') ||
-        deviceType.toLowerCase().contains('dvr')) {
+    if (deviceType.toLowerCase().contains('nvr') || deviceType.toLowerCase().contains('dvr')) {
       protocols.add(CameraProtocol.onvif);
     }
 
@@ -492,10 +380,7 @@ class CameraDiscoveryService {
     _nsdConfigured = true;
   }
 
-  Future<List<ProbeMatch>> _discoverOnvif(
-    Duration timeout, {
-    required bool forceMulticast,
-  }) async {
+  Future<List<ProbeMatch>> _discoverOnvif(Duration timeout, {required bool forceMulticast}) async {
     if (Platform.isIOS && !forceMulticast) {
       return const <ProbeMatch>[];
     }
@@ -514,11 +399,8 @@ class CameraDiscoveryService {
 
     final changed = await Future.wait(
       _mdnsServiceTypes.map(
-        (serviceType) => _discoverMdnsForServiceType(
-          serviceType: serviceType,
-          camerasByIp: camerasByIp,
-          ipByName: ipByName,
-        ),
+        (serviceType) =>
+            _discoverMdnsForServiceType(serviceType: serviceType, camerasByIp: camerasByIp, ipByName: ipByName),
       ),
     );
 
@@ -536,13 +418,10 @@ class CameraDiscoveryService {
     var changed = false;
 
     try {
-      discovery = await startDiscovery(serviceType, ipLookupType: IpLookupType.v4)
-          .timeout(
-            const Duration(seconds: 5),
-            onTimeout: () => throw TimeoutException(
-              'startDiscovery timed out for serviceType=$serviceType after 5s',
-            ),
-          );
+      discovery = await startDiscovery(serviceType, ipLookupType: IpLookupType.v4).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw TimeoutException('startDiscovery timed out for serviceType=$serviceType after 5s'),
+      );
 
       discovery.addServiceListener((service, status) async {
         if (status != ServiceStatus.found) {
@@ -594,14 +473,8 @@ class CameraDiscoveryService {
 
       await Future<void>.delayed(_mdnsDiscoveryWindow);
     } on TimeoutException catch (e, st) {
-      _log(
-        'mDNS startDiscovery timeout for serviceType=$serviceType: $e\n$st',
-        isCritical: true,
-      );
-      Error.throwWithStackTrace(
-        TimeoutException('mDNS startDiscovery timeout for serviceType=$serviceType: $e'),
-        st,
-      );
+      _log('mDNS startDiscovery timeout for serviceType=$serviceType: $e\n$st', isCritical: true);
+      Error.throwWithStackTrace(TimeoutException('mDNS startDiscovery timeout for serviceType=$serviceType: $e'), st);
     } on SocketException catch (e, st) {
       _log(
         'mDNS socket error for serviceType=$serviceType: ${e.message} '
@@ -616,14 +489,9 @@ class CameraDiscoveryService {
         st,
       );
     } catch (e, st) {
-      _log(
-        'mDNS discovery failed for serviceType=$serviceType: ${e.runtimeType}: $e\n$st',
-        isCritical: true,
-      );
+      _log('mDNS discovery failed for serviceType=$serviceType: ${e.runtimeType}: $e\n$st', isCritical: true);
       Error.throwWithStackTrace(
-        Exception(
-          'mDNS discovery failed for serviceType=$serviceType: ${e.runtimeType}: $e',
-        ),
+        Exception('mDNS discovery failed for serviceType=$serviceType: ${e.runtimeType}: $e'),
         st,
       );
     } finally {
@@ -646,11 +514,7 @@ class CameraDiscoveryService {
   Future<bool> _isPortOpen(String host, int port) async {
     Socket? socket;
     try {
-      socket = await Socket.connect(
-        host,
-        port,
-        timeout: const Duration(milliseconds: 1500),
-      );
+      socket = await Socket.connect(host, port, timeout: const Duration(milliseconds: 1500));
       _log('Port check success: $host:$port is OPEN');
       return true;
     } catch (e) {
@@ -680,12 +544,9 @@ class CameraDiscoveryService {
         protocols.add(CameraProtocol.generic);
       }
 
-      _log(
-        'Found protocols for ${cam.ip}: ${protocols.map((e) => e.displayName).join(', ')}',
-      );
+      _log('Found protocols for ${cam.ip}: ${protocols.map((e) => e.displayName).join(', ')}');
 
-      if (protocols.length != cam.supportedProtocols.length ||
-          !protocols.containsAll(cam.supportedProtocols)) {
+      if (protocols.length != cam.supportedProtocols.length || !protocols.containsAll(cam.supportedProtocols)) {
         camerasByIp[cam.ip] = cam.copyWith(supportedProtocols: protocols);
         changed = true;
       }
