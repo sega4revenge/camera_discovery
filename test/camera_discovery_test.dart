@@ -14,6 +14,19 @@ void main() {
     expect(CameraDiscoveryProtocol.sadp.displayName, 'SADP');
   });
 
+  test('discovery issue enum is exported', () {
+    final report = DiscoveryReport(
+      cameras: [],
+      startedAt: DateTime.fromMillisecondsSinceEpoch(0),
+      finishedAt: DateTime.fromMillisecondsSinceEpoch(1),
+      usedFallbackScan: false,
+      issue: DiscoveryIssue.localNetworkUnavailable,
+    );
+
+    expect(report.issue, DiscoveryIssue.localNetworkUnavailable);
+    expect(report.hasLocalNetworkIssue, isTrue);
+  });
+
   group('DiscoveredCamera serialNumber model-stripping', () {
     test('strips exact model from the beginning of serialNumber', () {
       final camera = DiscoveredCamera(
@@ -82,7 +95,8 @@ void main() {
         source: CameraDiscoverySource.sadp,
         brand: CameraBrand.ezviz,
         model: 'CS-C3TN-A0-1H3WKFL-B',
-        serialNumber: 'CS-C3TN-A0-1H3WKFL-B0120220527CCRRK02854364', // Note: Model will be stripped from serial first
+        serialNumber:
+            'CS-C3TN-A0-1H3WKFL-B0120220527CCRRK02854364', // Note: Model will be stripped from serial first
       );
       expect(camera.name, 'EZVIZ CS-C3TN-A0-1H3WKFL-B - 0120220527CCRRK02854364');
     });

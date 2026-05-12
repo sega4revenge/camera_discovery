@@ -68,19 +68,29 @@ class CameraDiscoveryService {
       CameraDiscoveryProtocol.onvif,
       CameraDiscoveryProtocol.sadp,
     ],
-    void Function(List<DiscoveredCamera> cameras, CameraDiscoveryPhase phase, CameraDiscoveryProtocol? protocol)?
+    void Function(
+      List<DiscoveredCamera> cameras,
+      CameraDiscoveryPhase phase,
+      CameraDiscoveryProtocol? protocol,
+    )?
     onProgress,
   }) async {
     final startedAt = DateTime.now();
     final camerasByIp = <String, DiscoveredCamera>{};
     final ipByName = <String, String>{};
     final warnings = <String>[];
-    void notifyProgress(CameraDiscoveryPhase phase, [CameraDiscoveryProtocol? protocol]) =>
-        onProgress == null ? null : onProgress(sortCamerasByIpOctet(camerasByIp.values), phase, protocol);
-    bool shouldRunProtocol(CameraDiscoveryProtocol protocol) => listProtocol.contains(protocol);
+    void notifyProgress(
+      CameraDiscoveryPhase phase, [
+      CameraDiscoveryProtocol? protocol,
+    ]) => onProgress == null
+        ? null
+        : onProgress(sortCamerasByIpOctet(camerasByIp.values), phase, protocol);
+    bool shouldRunProtocol(CameraDiscoveryProtocol protocol) =>
+        listProtocol.contains(protocol);
 
     try {
-      if (shouldRunProtocol(CameraDiscoveryProtocol.multicast) || shouldRunProtocol(CameraDiscoveryProtocol.sadp)) {
+      if (shouldRunProtocol(CameraDiscoveryProtocol.multicast) ||
+          shouldRunProtocol(CameraDiscoveryProtocol.sadp)) {
         notifyProgress(CameraDiscoveryPhase.scan);
       }
 
@@ -91,9 +101,22 @@ class CameraDiscoveryService {
           await _discoverMdns(
             camerasByIp,
             ipByName,
-            () => notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.multicast),
+            () => notifyProgress(
+              CameraDiscoveryPhase.scan,
+              CameraDiscoveryProtocol.multicast,
+            ),
           );
         } catch (e) {
+          if (_isLocalNetworkUnavailableError(e)) {
+            return _buildDiscoveryReport(
+              camerasByIp: camerasByIp,
+              startedAt: startedAt,
+              warnings: warnings,
+              issue: DiscoveryIssue.localNetworkUnavailable,
+              error: 'Local Network is unavailable: $e',
+            );
+          }
+
           warnings.add('mDNS/Bonjour discovery failed: $e');
         }
       }
@@ -107,6 +130,16 @@ class CameraDiscoveryService {
             () => notifyProgress(CameraDiscoveryPhase.scan, CameraDiscoveryProtocol.sadp),
           );
         } catch (e) {
+          if (_isLocalNetworkUnavailableError(e)) {
+            return _buildDiscoveryReport(
+              camerasByIp: camerasByIp,
+              startedAt: startedAt,
+              warnings: warnings,
+              issue: DiscoveryIssue.localNetworkUnavailable,
+              error: 'Local Network is unavailable: $e',
+            );
+          }
+
           warnings.add('SADP discovery failed: $e');
         }
       }
@@ -129,7 +162,9 @@ class CameraDiscoveryService {
               match.scopes.toString(),
               match.endpointReference.address,
             ]);
-            _log('ONVIF Match metadata for $ip: brand=${brand.displayName} name=${match.name}');
+            _log(
+              'ONVIF Match metadata for $ip: brand=${brand.displayName} name=${match.name}',
+            );
 
             final newCam = DiscoveredCamera(
               ip: ip,
@@ -144,12 +179,34 @@ class CameraDiscoveryService {
             }
           }
         } on SocketException catch (e) {
+          if (_isLocalNetworkUnavailableError(e)) {
+            return _buildDiscoveryReport(
+              camerasByIp: camerasByIp,
+              startedAt: startedAt,
+              warnings: warnings,
+              issue: DiscoveryIssue.localNetworkUnavailable,
+              error: 'Local Network is unavailable: $e',
+            );
+          }
+
           if (isNoRouteToHostError(e)) {
-            warnings.add('ONVIF multicast is unavailable on the current network (No route to host).');
+            warnings.add(
+              'ONVIF multicast is unavailable on the current network (No route to host).',
+            );
           } else {
             warnings.add('ONVIF discovery failed: $e');
           }
         } catch (e) {
+          if (_isLocalNetworkUnavailableError(e)) {
+            return _buildDiscoveryReport(
+              camerasByIp: camerasByIp,
+              startedAt: startedAt,
+              warnings: warnings,
+              issue: DiscoveryIssue.localNetworkUnavailable,
+              error: 'Local Network is unavailable: $e',
+            );
+          }
+
           warnings.add('ONVIF discovery failed: $e');
         }
       }
@@ -162,17 +219,60 @@ class CameraDiscoveryService {
         warnings.add('Protocol detection failed: $e');
       }
     } catch (e) {
+      if (_isLocalNetworkUnavailableError(e)) {
+        return _buildDiscoveryReport(
+          camerasByIp: camerasByIp,
+          startedAt: startedAt,
+          warnings: warnings,
+          issue: DiscoveryIssue.localNetworkUnavailable,
+          error: 'Local Network is unavailable: $e',
+        );
+      }
+
       warnings.add('Discovery failed: $e');
     }
     notifyProgress(CameraDiscoveryPhase.completed);
 
+    return _buildDiscoveryReport(
+      camerasByIp: camerasByIp,
+      startedAt: startedAt,
+      warnings: warnings,
+    );
+  }
+
+  DiscoveryReport _buildDiscoveryReport({
+    required Map<String, DiscoveredCamera> camerasByIp,
+    required DateTime startedAt,
+    required List<String> warnings,
+    DiscoveryIssue issue = DiscoveryIssue.none,
+    String? error,
+  }) {
     return DiscoveryReport(
       cameras: sortCamerasByIpOctet(camerasByIp.values),
       startedAt: startedAt,
       finishedAt: DateTime.now(),
       usedFallbackScan: false,
-      error: warnings.isEmpty ? null : warnings.join('\n'),
+      issue: issue,
+      error: error ?? (warnings.isEmpty ? null : warnings.join('\n')),
     );
+  }
+
+  bool _isLocalNetworkUnavailableError(Object error) {
+    if (error is SocketException) {
+      final message = '${error.osError?.message ?? error.message} ${error.toString()}'
+          .toLowerCase();
+      return isNoRouteToHostError(error) ||
+          (error.address?.address == '0.0.0.0' &&
+              error.port == 0 &&
+              (message.contains('send failed') ||
+                  message.contains('no route to host') ||
+                  message.contains('permission denied')));
+    }
+
+    final lower = error.toString().toLowerCase();
+    return lower.contains('no route to host') &&
+        lower.contains('0.0.0.0') &&
+        lower.contains('port = 0');
   }
 
   bool _addOrMergeCamera(
@@ -187,7 +287,9 @@ class CameraDiscoveryService {
     DiscoveredCamera mergeFields(DiscoveredCamera existing, DiscoveredCamera incoming) {
       final mergedModel = incoming.model ?? existing.model;
       final mergedSerial = incoming.serialNumber ?? existing.serialNumber;
-      final mergedBrand = incoming.brand != CameraBrand.unknown ? incoming.brand : existing.brand;
+      final mergedBrand = incoming.brand != CameraBrand.unknown
+          ? incoming.brand
+          : existing.brand;
 
       return existing.copyWith(
         brand: mergedBrand,
@@ -196,7 +298,9 @@ class CameraDiscoveryService {
         onvifXAddr: incoming.onvifXAddr ?? existing.onvifXAddr,
         rtspUri: incoming.rtspUri ?? existing.rtspUri,
         macAddress: incoming.macAddress ?? existing.macAddress,
-        supportedProtocols: existing.supportedProtocols.union(incoming.supportedProtocols),
+        supportedProtocols: existing.supportedProtocols.union(
+          incoming.supportedProtocols,
+        ),
       );
     }
 
@@ -351,7 +455,8 @@ class CameraDiscoveryService {
     final protocols = <CameraProtocol>{CameraProtocol.generic};
 
     // NVR / DVR devices also support ONVIF commonly.
-    if (deviceType.toLowerCase().contains('nvr') || deviceType.toLowerCase().contains('dvr')) {
+    if (deviceType.toLowerCase().contains('nvr') ||
+        deviceType.toLowerCase().contains('dvr')) {
       protocols.add(CameraProtocol.onvif);
     }
 
@@ -380,7 +485,10 @@ class CameraDiscoveryService {
     _nsdConfigured = true;
   }
 
-  Future<List<ProbeMatch>> _discoverOnvif(Duration timeout, {required bool forceMulticast}) async {
+  Future<List<ProbeMatch>> _discoverOnvif(
+    Duration timeout, {
+    required bool forceMulticast,
+  }) async {
     if (Platform.isIOS && !forceMulticast) {
       return const <ProbeMatch>[];
     }
@@ -399,8 +507,11 @@ class CameraDiscoveryService {
 
     final changed = await Future.wait(
       _mdnsServiceTypes.map(
-        (serviceType) =>
-            _discoverMdnsForServiceType(serviceType: serviceType, camerasByIp: camerasByIp, ipByName: ipByName),
+        (serviceType) => _discoverMdnsForServiceType(
+          serviceType: serviceType,
+          camerasByIp: camerasByIp,
+          ipByName: ipByName,
+        ),
       ),
     );
 
@@ -418,10 +529,13 @@ class CameraDiscoveryService {
     var changed = false;
 
     try {
-      discovery = await startDiscovery(serviceType, ipLookupType: IpLookupType.v4).timeout(
-        const Duration(seconds: 5),
-        onTimeout: () => throw TimeoutException('startDiscovery timed out for serviceType=$serviceType after 5s'),
-      );
+      discovery = await startDiscovery(serviceType, ipLookupType: IpLookupType.v4)
+          .timeout(
+            const Duration(seconds: 5),
+            onTimeout: () => throw TimeoutException(
+              'startDiscovery timed out for serviceType=$serviceType after 5s',
+            ),
+          );
 
       discovery.addServiceListener((service, status) async {
         if (status != ServiceStatus.found) {
@@ -473,8 +587,14 @@ class CameraDiscoveryService {
 
       await Future<void>.delayed(_mdnsDiscoveryWindow);
     } on TimeoutException catch (e, st) {
-      _log('mDNS startDiscovery timeout for serviceType=$serviceType: $e\n$st', isCritical: true);
-      Error.throwWithStackTrace(TimeoutException('mDNS startDiscovery timeout for serviceType=$serviceType: $e'), st);
+      _log(
+        'mDNS startDiscovery timeout for serviceType=$serviceType: $e\n$st',
+        isCritical: true,
+      );
+      Error.throwWithStackTrace(
+        TimeoutException('mDNS startDiscovery timeout for serviceType=$serviceType: $e'),
+        st,
+      );
     } on SocketException catch (e, st) {
       _log(
         'mDNS socket error for serviceType=$serviceType: ${e.message} '
@@ -489,9 +609,14 @@ class CameraDiscoveryService {
         st,
       );
     } catch (e, st) {
-      _log('mDNS discovery failed for serviceType=$serviceType: ${e.runtimeType}: $e\n$st', isCritical: true);
+      _log(
+        'mDNS discovery failed for serviceType=$serviceType: ${e.runtimeType}: $e\n$st',
+        isCritical: true,
+      );
       Error.throwWithStackTrace(
-        Exception('mDNS discovery failed for serviceType=$serviceType: ${e.runtimeType}: $e'),
+        Exception(
+          'mDNS discovery failed for serviceType=$serviceType: ${e.runtimeType}: $e',
+        ),
         st,
       );
     } finally {
@@ -514,7 +639,11 @@ class CameraDiscoveryService {
   Future<bool> _isPortOpen(String host, int port) async {
     Socket? socket;
     try {
-      socket = await Socket.connect(host, port, timeout: const Duration(milliseconds: 1500));
+      socket = await Socket.connect(
+        host,
+        port,
+        timeout: const Duration(milliseconds: 1500),
+      );
       _log('Port check success: $host:$port is OPEN');
       return true;
     } catch (e) {
@@ -544,9 +673,12 @@ class CameraDiscoveryService {
         protocols.add(CameraProtocol.generic);
       }
 
-      _log('Found protocols for ${cam.ip}: ${protocols.map((e) => e.displayName).join(', ')}');
+      _log(
+        'Found protocols for ${cam.ip}: ${protocols.map((e) => e.displayName).join(', ')}',
+      );
 
-      if (protocols.length != cam.supportedProtocols.length || !protocols.containsAll(cam.supportedProtocols)) {
+      if (protocols.length != cam.supportedProtocols.length ||
+          !protocols.containsAll(cam.supportedProtocols)) {
         camerasByIp[cam.ip] = cam.copyWith(supportedProtocols: protocols);
         changed = true;
       }
